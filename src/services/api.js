@@ -5,6 +5,9 @@ import axios from "axios";
 // ==============================
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5001/api";
 
+// ✅ Base URL without /api (kyunki /health and / root pe hain, /api ke andar nahi)
+const BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:5001").replace('/api', '');
+
 // ==============================
 // Axios Instance
 // ==============================
@@ -196,18 +199,11 @@ export const authAPI = {
 // ==============================
 // SECTION 1: ROOT & HEALTH ENDPOINTS
 // ==============================
-// ==============================
-// SECTION 1: ROOT & HEALTH ENDPOINTS
-// ==============================
-
-// ✅ Base URL without /api (kyunki /health and / root pe hain, /api ke andar nahi)
-const BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:5001").replace('/api', '');
-
 export const healthAPI = {
   // Welcome Message
   getWelcome: async () => {
     try {
-      const response = await axios.get(`${BASE_URL}/`);  // ✅ Fixed: Environment variable use kiya
+      const response = await axios.get(`${BASE_URL}/`);
       return response.data;
     } catch (error) {
       throw error.response?.data || error.message;
@@ -217,7 +213,32 @@ export const healthAPI = {
   // Health Check
   checkHealth: async () => {
     try {
-      const response = await axios.get(`${BASE_URL}/health`);  // ✅ Fixed: Syntax error aur URL
+      const response = await axios.get(`${BASE_URL}/health`);
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || error.message;
+    }
+  },
+};
+
+// ==============================
+// SECTION 3: HOME PAGE ENDPOINTS
+// ==============================
+export const homeAPI = {
+  // Get Homepage Data (Banners, Featured Products)
+  getHomeData: async () => {
+    try {
+      const response = await apiClient.get("/home");
+      return response.data;
+    } catch (error) {
+      throw error.response?.data || error.message;
+    }
+  },
+
+  // Get Site Statistics
+  getStats: async () => {
+    try {
+      const response = await apiClient.get("/stats");
       return response.data;
     } catch (error) {
       throw error.response?.data || error.message;
