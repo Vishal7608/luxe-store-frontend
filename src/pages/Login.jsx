@@ -1,14 +1,445 @@
-import React, { useState } from 'react';
-import { FiMail, FiLock, FiUser, FiEye, FiEyeOff } from 'react-icons/fi';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  FiMail,
+  FiLock,
+  FiUser,
+  FiEye,
+  FiEyeOff,
+  FiPhone,
+  FiMessageCircle,
+} from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import { authAPI } from "../services/api";
 import { useApp } from "../context/AppContext";
 
+// ==========================================
+// 1. GOOGLE LOGIN COMPONENT
+// ==========================================
+const GoogleLogin = ({ onSuccess }) => {
+  const { loginWithGoogle } = useApp();
+  const [loading, setLoading] = useState(false);
+
+  const handleGoogleLogin = async () => {
+    try {
+      setLoading(true);
+      if (typeof window.google === 'undefined') {
+        toast.error('Google SDK is still loading. Please wait.');
+        return;
+      }
+
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '95642146856-5doqkmqdiki84pfdicd2fq2oactsd821.apps.googleusercontent.com',
+        scope: 'email profile',
+        callback: async (tokenResponse) => {
+          if (tokenResponse.access_token) {
+            const result = await loginWithGoogle(tokenResponse.access_token);
+            if (result.success) {
+              onSuccess(result.user);
+            } else {
+              toast.error(result.message || 'Google login failed');
+            }
+          }
+        },
+      });
+      client.requestAccessToken();
+    } catch (error) {
+      console.error('Google login error:', error);
+      toast.error('Google login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isReady = typeof window.google !== 'undefined';
+
+  return (
+    <button
+      type="button"
+      onClick={handleGoogleLogin}
+      disabled={loading || !isReady}
+      className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white py-3 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:bg-gray-50 disabled:opacity-50"
+    >
+      <svg className="h-5 w-5" viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.7h3.56c2.08-1.92 3.28-4.75 3.28-8.03z" />
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.56-2.7c-.98.66-2.23 1.06-3.72 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.66-2.84z" />
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.2 1.64l3.12-3.12C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l2.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+      </svg>
+      {!isReady ? 'Loading Google...' : 'Continue with Google'}
+    </button>
+  );
+};
+
+// ==========================================
+// 2. FACEBOOK LOGIN COMPONENT
+// ==========================================
+const FacebookLogin = ({ onSuccess }) => {
+  const { loginWithFacebook } = useApp();
+  const [loading, setLoading] = useState(false);
+  const [sdkReady, setSdkReady] = useState(false);
+
+  useEffect(() => {
+    const initFB = () => {
+      const rawAppId = import.meta.env.VITE_FACEBOOK_APP_ID;
+      
+      if (!rawAppId) {
+        console.error("❌ VITE_FACEBOOK_APP_ID is undefined or missing in your frontend .env!");
+        return;
+      }
+
+      const cleanAppId = String(rawAppId).trim();
+
+      window.FB.init({
+        appId      : cleanAppId, 
+        cookie     : true,
+        xfbml      : true,
+        version    : 'v18.0'
+      });
+      setSdkReady(true);
+    };
+
+    if (window.FB) {
+      initFB();
+      return;
+    }
+
+    window.fbAsyncInit = function() {
+      initFB();
+    };
+
+    const scriptId = 'facebook-jssdk';
+    if (!document.getElementById(scriptId)) {
+      const scriptNode = document.createElement('script');
+      scriptNode.id = scriptId;
+      scriptNode.async = true;
+      scriptNode.defer = true;
+      scriptNode.crossOrigin = 'anonymous';
+      scriptNode.src = 'https://connect.facebook.net/en_US/sdk.js';
+      document.getElementsByTagName('head')[0].appendChild(scriptNode);
+    }
+  }, []);
+
+  const handleFacebookLogin = () => {
+    try {
+      setLoading(true);
+      if (!window.FB) {
+        toast.error('Facebook SDK is still loading. Please wait.');
+        setLoading(false);
+        return;
+      }
+
+      window.FB.login((response) => {
+        if (response.status === 'connected') {
+          (async () => {
+            try {
+              const result = await loginWithFacebook(response.authResponse.accessToken);
+              if (result.success) {
+                onSuccess(result.user);
+              } else {
+                toast.error(result.message || 'Facebook login failed');
+              }
+            } catch (err) {
+              console.error('Facebook login handling error:', err);
+              toast.error('Facebook login failed');
+            } finally {
+              setLoading(false);
+            }
+          })();
+        } else {
+          toast.error('Facebook login cancelled');
+          setLoading(false);
+        }
+      }, { scope: 'email,public_profile' });
+    } catch (error) {
+      console.error('Facebook error:', error);
+      toast.error('Facebook login failed');
+      setLoading(false);
+    }
+  };
+
+  const isReady = sdkReady || typeof window.FB !== 'undefined';
+
+  return (
+    <button
+      type="button"
+      onClick={handleFacebookLogin}
+      disabled={loading || !isReady}
+      className="flex w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white py-3 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:bg-gray-50 disabled:opacity-50"
+    >
+      <svg className="h-5 w-5 text-[#1877F2] fill-current" viewBox="0 0 24 24">
+        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+      </svg>
+      {!isReady ? 'Loading Facebook...' : 'Continue with Facebook'}
+    </button>
+  );
+};
+
+// ==========================================
+// 3. PHONE LOGIN COMPONENT
+// ==========================================
+const PhoneLogin = ({ onSuccess }) => {
+  const { loginWithPhone, sendPhoneOTP } = useApp();
+  const [step, setStep] = useState('phone');
+  const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const otpInputRef = useRef(null);
+
+  useEffect(() => {
+    if (step === 'otp' && otpInputRef.current) {
+      otpInputRef.current.focus();
+    }
+  }, [step]);
+
+  const handleSendOTP = async (e) => {
+    e.preventDefault();
+    if (!phone.trim()) {
+      toast.error('Please enter phone number');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await sendPhoneOTP(phone.trim());
+      if (res.success) {
+        setStep('otp');
+        toast.success('OTP sent successfully!');
+      } else {
+        toast.error(res.message || 'Failed to send OTP');
+      }
+    } catch (err) {
+      toast.error('Error sending OTP');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOTP = async (e) => {
+    e.preventDefault();
+    if (!otp.trim() || otp.length !== 6) {
+      toast.error('Please enter 6-digit OTP');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await loginWithPhone(phone.trim(), otp.trim());
+      if (res.success) {
+        toast.success('Login successful!');
+        onSuccess(res.user);
+      } else {
+        toast.error(res.message || 'Invalid OTP');
+      }
+    } catch (err) {
+      toast.error('OTP verification failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {step === 'phone' ? (
+        <form onSubmit={handleSendOTP} className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-semibold text-gray-900">Phone Number</label>
+            <input
+              type="tel"
+              required
+              placeholder="Enter phone number (e.g. 9408197990)"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-lg bg-black py-3 text-sm font-semibold text-white transition-all hover:bg-gray-800 disabled:opacity-50"
+          >
+            {loading ? 'Sending OTP...' : 'Send SMS OTP'}
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={handleVerifyOTP} className="space-y-4">
+          <p className="text-xs text-gray-600">
+            Enter the 6-digit OTP sent to <strong className="text-gray-950">{phone}</strong>
+          </p>
+          <input
+            ref={otpInputRef}
+            type="text"
+            required
+            maxLength="6"
+            placeholder="• • • • • •"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-center text-lg font-mono tracking-[0.3em] outline-none focus:border-indigo-600"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => { setStep('phone'); setOtp(''); }}
+              className="w-1/3 rounded-lg border border-gray-300 py-2.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+            >
+              Back
+            </button>
+            <button
+              type="submit"
+              disabled={loading || otp.length !== 6}
+              className="w-2/3 rounded-lg bg-black py-2.5 text-xs font-semibold text-white transition-all hover:bg-gray-800 disabled:opacity-50"
+            >
+              {loading ? 'Verifying...' : 'Verify & Login'}
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+};
+
+// ==========================================
+// 4. WHATSAPP LOGIN COMPONENT
+// ==========================================
+const WhatsAppLogin = ({ onSuccess }) => {
+  const { loginWithWhatsApp, sendWhatsAppOTP } = useApp();
+  const [step, setStep] = useState('phone');
+  const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const otpInputRef = useRef(null);
+
+  useEffect(() => {
+    if (step === 'otp' && otpInputRef.current) {
+      otpInputRef.current.focus();
+    }
+  }, [step]);
+
+  const handleSendOTP = async (e) => {
+    e.preventDefault();
+    if (!phone.trim()) {
+      toast.error('Please enter WhatsApp number');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await sendWhatsAppOTP(phone.trim());
+      if (res.success) {
+        setStep('otp');
+        toast.success('WhatsApp OTP sent!');
+      } else {
+        toast.error(res.message || 'Failed to send WhatsApp OTP');
+      }
+    } catch (err) {
+      toast.error('Error sending WhatsApp OTP');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOTP = async (e) => {
+    e.preventDefault();
+    if (!otp.trim() || otp.length !== 6) {
+      toast.error('Please enter 6-digit OTP');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await loginWithWhatsApp(phone.trim(), otp.trim());
+      if (res.success) {
+        toast.success('WhatsApp login successful!');
+        onSuccess(res.user);
+      } else {
+        toast.error(res.message || 'Invalid WhatsApp OTP');
+      }
+    } catch (err) {
+      toast.error('WhatsApp OTP verification failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 rounded-lg border border-green-200 bg-green-50/40 p-4">
+      <div className="flex items-center gap-2">
+        <FiMessageCircle className="text-green-600" size={14} />
+        <span className="text-xs font-bold uppercase tracking-wider text-green-900">
+          WhatsApp OTP Verification
+        </span>
+      </div>
+
+      {step === 'phone' ? (
+        <form onSubmit={handleSendOTP} className="space-y-3">
+          <input
+            type="tel"
+            required
+            placeholder="WhatsApp number (e.g. 9408197990)"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            className="w-full rounded-lg border border-green-300 bg-white px-3.5 py-2.5 text-xs outline-none focus:border-green-600"
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-lg bg-green-600 py-3 text-xs font-bold uppercase tracking-widest text-white transition-all hover:bg-green-700 disabled:opacity-50"
+          >
+            {loading ? 'Sending OTP...' : 'Send WhatsApp OTP'}
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={handleVerifyOTP} className="space-y-3">
+          <p className="text-xs text-green-800">
+            Enter 6-digit OTP sent to WhatsApp: <strong className="text-green-950">{phone}</strong>
+          </p>
+          <input
+            ref={otpInputRef}
+            type="text"
+            required
+            maxLength="6"
+            placeholder="• • • • • •"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+            className="w-full rounded-lg border border-green-600 bg-white px-3 py-2.5 text-center text-lg font-mono tracking-[0.3em] outline-none"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => { setStep('phone'); setOtp(''); }}
+              className="w-1/3 rounded-lg border border-green-300 py-2 text-xs font-semibold text-green-800 hover:bg-green-100"
+            >
+              Back
+            </button>
+            <button
+              type="submit"
+              disabled={loading || otp.length !== 6}
+              className="w-2/3 rounded-lg bg-green-600 py-2 text-xs font-bold uppercase tracking-widest text-white transition-all hover:bg-green-700 disabled:opacity-50"
+            >
+              {loading ? 'Verifying...' : 'Verify & Login'}
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+};
+
+// ==========================================
+// 5. MAIN LOGIN COMPONENT
+// ==========================================
 export default function Login({ onNavigate }) {
   const { loginUser } = useApp();
+
   const [mode, setMode] = useState("login");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // Switch between Email/Password login, Mobile OTP, or WhatsApp login
+  const [authMethod, setAuthMethod] = useState("email");
+  // Distinguish normal user vs admin login flow explicitly
+  const [isAdminPortal, setIsAdminPortal] = useState(false);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -23,41 +454,41 @@ export default function Login({ onNavigate }) {
   const validateForm = () => {
     const newErrors = {};
     if (!validateEmail(email)) newErrors.email = "Please enter a valid email address";
-    
-    if (mode !== 'forgot') {
-      if (!validatePassword(password)) newErrors.password = "Password must be at least 6 characters";
-    }
-
-    if (mode === 'register') {
+    if (mode !== "forgot" && !validatePassword(password)) newErrors.password = "Password must be at least 6 characters";
+    if (mode === "register") {
       if (!validateName(name)) newErrors.name = "Name must be at least 2 characters";
       if (password !== confirmPassword) newErrors.confirmPassword = "Passwords do not match";
     }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const getPasswordStrength = (password) => {
-    if (password.length < 6) return { strength: 'weak', color: 'bg-red-500' };
-    if (password.length < 8) return { strength: 'medium', color: 'bg-yellow-500' };
-    if (password.match(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/)) 
-      return { strength: 'strong', color: 'bg-green-500' };
-    return { strength: 'medium', color: 'bg-yellow-500' };
-  };
+  // Central routing helper that respects the user's role
+const handleLoginSuccess = (user, token) => {
+  loginUser(user, token);
+  
+  if (user?.role === 'admin') {
+    toast.success("Welcome back, Administrator!");
+    setTimeout(() => onNavigate("admin-dashboard"), 100); // <-- Double check if your dashboard route is "admin-dashboard" or "admin"
+  } else {
+    toast.success("Welcome back!");
+    setTimeout(() => onNavigate("home"), 100);
+  }
+};
 
   const handleFormSubmit = async (e) => {
     e.preventDefault();
-    if (loading) return;
-
-    if (!validateForm()) return;
+    if (loading || !validateForm()) return;
 
     setLoading(true);
     setErrors({});
 
     try {
       if (mode === "forgot") {
-        await authAPI.forgotPassword(email);
-        toast.success("Reset instructions sent to your email");
+        if (typeof authAPI.forgotPassword === "function") {
+          await authAPI.forgotPassword(email);
+        }
+        toast.success("Reset instructions sent to your email!");
         setMode("login");
         return;
       }
@@ -68,235 +499,293 @@ export default function Login({ onNavigate }) {
           email: email.trim().toLowerCase(),
           password,
         });
-
-        toast.success(data.message || "Welcome to Atelier!");
+        toast.success(data.message || "Welcome! Please log in to your account.");
         setMode("login");
         resetForm();
         return;
       }
 
-      if (mode === "login") {
-        const data = await authAPI.login(email.toLowerCase(), password);
-        loginUser(data.user, data.token); 
-        toast.success(data.message || "Welcome back!");
-        setTimeout(() => onNavigate("home"), 100);
-        return;
-      }
+     if (mode === "login") {
+  let data;
+  if (isAdminPortal) {
+    data = await authAPI.adminLogin(email.toLowerCase(), password);
+  } else {
+    data = await authAPI.login(email.toLowerCase(), password);
+  }
+  
+  // ✅ FIX: Extract user and token from data.data or data
+  const payload = data?.data || data;
+  const user = payload?.user;
+  const token = payload?.token;
+
+  if (user && token) {
+    handleLoginSuccess(user, token);
+  } else {
+    toast.error("Failed to parse user data from response");
+  }
+  return;
+}
     } catch (err) {
-      console.error('Auth error:', err);
-      const errorMessage = err?.response?.data?.message || err?.message || "Authentication failed";
-      toast.error(errorMessage);
+      console.error("Auth error:", err);
+      toast.error(err?.response?.data?.message || err?.message || "Authentication failed");
     } finally {
       setLoading(false);
     }
   };
 
   const resetForm = () => {
-    setEmail(""); 
-    setPassword(""); 
-    setName(""); 
+    setEmail("");
+    setPassword("");
+    setName("");
     setConfirmPassword("");
-    setErrors({}); 
+    setErrors({});
     setShowPassword(false);
   };
 
-  // ✅ FIXED: Improved mode switcher function
-  const handleModeSwitch = (newMode) => {
-    console.log("🔄 Switching to mode:", newMode);
-    setMode(newMode);
-    resetForm();
-  };
-
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-8">
-      <div 
-        className="max-w-md w-full bg-white rounded-3xl p-6 sm:p-10 border border-gray-100 shadow-xl space-y-6 animate-scale-in"
-        style={{ zIndex: 10 }}
-      >
+    <main className="flex min-h-screen w-full items-center justify-center bg-gray-50 px-4 py-8">
+      <div className="w-full max-w-md">
         
-        {/* HEADER */}
-        <div className="text-center space-y-2">
-          <span className="text-[10px] text-primary uppercase font-bold tracking-[0.25em]">
-            Atelier Access
-          </span>
-          <h2 className="font-display font-bold text-2xl text-black uppercase tracking-tight">
-            {mode === 'login' ? 'Sign In' : mode === 'register' ? 'Join Atelier' : 'Reset Password'}
-          </h2>
-          <p className="text-xs text-gray-400">
-            {mode === 'login' ? 'Welcome back to elite design' : 
-             mode === 'register' ? 'Create your design portfolio' : 
-             'Recover your account access'}
-          </p>
+        {/* Subtle Admin Toggle Switch at the top of the card wrapper */}
+        <div className="mb-4 flex justify-end">
+          <button
+            onClick={() => {
+              setIsAdminPortal(!isAdminPortal);
+              setAuthMethod("email"); // Admin logins are only password based
+            }}
+            className="rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-300 transition-all"
+          >
+            {isAdminPortal ? "Switch to User Login" : "Switch to Admin Portal"}
+          </button>
         </div>
 
-        {/* ✅ FORM - Separated from mode switchers */}
-        <form onSubmit={handleFormSubmit} className="space-y-4">
-          
-          {/* NAME (Register Only) */}
-          {mode === 'register' && (
-            <div className="space-y-1.5 text-xs">
-              <label className="font-bold text-gray-700 uppercase flex items-center space-x-1">
-                <FiUser /><span>Full Name</span>
-              </label>
-              <input
-                type="text" 
-                required 
-                placeholder="e.g. Vishal Nishad"
-                className={`w-full bg-slate-50 border ${errors.name ? 'border-red-300' : 'border-transparent'} py-2.5 px-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary`}
-                value={name} 
-                onChange={(e) => setName(e.target.value)}
-              />
-              {errors.name && <p className="text-red-500 text-[10px]">{errors.name}</p>}
+        <div className="space-y-6 rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+
+          {/* Header (Matching image 2 style) */}
+          <div className="space-y-1.5 text-center">
+            <h2 className="text-3xl font-bold tracking-tight text-black">
+              {mode === "login" 
+                ? (isAdminPortal ? "Admin Login" : "Welcome Back!") 
+                : mode === "register" ? "Create Account" : "Forgot Password"
+              }
+            </h2>
+            <p className="text-sm text-gray-500">
+              {mode === "forgot" ? "Enter your email to reset your credentials" : "Let's get you signed in securely."}
+            </p>
+          </div>
+
+          {/* ==========================================
+              MAIN LOGIN MODE
+             ========================================== */}
+          {mode === "login" && (
+            <div className="space-y-5">
+              
+              {/* Only show Social/OTP options if NOT in Admin Portal mode */}
+              {!isAdminPortal && (
+                <>
+                  {/* Select Login Method Buttons */}
+                  {authMethod !== "email" && (
+                    <button
+                      onClick={() => setAuthMethod("email")}
+                      className="text-xs font-semibold text-[#4F46E5] underline hover:text-[#4338CA]"
+                    >
+                      ← Back to standard Email login
+                    </button>
+                  )}
+                </>
+              )}
+
+              {/* Dynamic Auth Method Fields */}
+              <div>
+                {authMethod === 'email' && (
+                  <form onSubmit={handleFormSubmit} className="space-y-4">
+                    
+                    {/* Email Input */}
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-semibold text-gray-900">Email</label>
+                      <input
+                        type="email"
+                        required
+                        placeholder="Enter Your Email Address"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                      />
+                    </div>
+
+                    {/* Password Input */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-semibold text-gray-900">Password</label>
+                        <button
+                          type="button"
+                          onClick={() => setMode("forgot")}
+                          className="text-xs font-semibold text-[#4F46E5] hover:underline"
+                        >
+                          Forgot Your Password?
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          required
+                          placeholder="Your Password"
+                          className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 pr-10"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                        >
+                          {showPassword ? <FiEyeOff size={16} /> : <FiEye size={16} />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Submit Button (Log in with Email) */}
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full rounded-lg bg-[#18181B] py-3 text-sm font-semibold text-white transition-all hover:bg-black disabled:opacity-50"
+                    >
+                      {loading ? "Logging in..." : isAdminPortal ? "Log in as Administrator" : "Log in with Email"}
+                    </button>
+                  </form>
+                )}
+
+                {/* OTP Auth Handlers */}
+                {authMethod === 'phone' && <PhoneLogin onSuccess={(user) => handleLoginSuccess(user, localStorage.getItem("luxe_token"))} />}
+                {authMethod === 'whatsapp' && <WhatsAppLogin onSuccess={(user) => handleLoginSuccess(user, localStorage.getItem("luxe_token"))} />}
+              </div>
+
+              {/* Social Login Options & OTP Mode toggles (Hidden on Admin Portal) */}
+              {authMethod === "email" && !isAdminPortal && (
+                <div className="space-y-4 pt-1">
+                  <div className="relative flex py-1 items-center font-semibold text-xs text-gray-400 uppercase">
+                    <div className="flex-grow border-t border-gray-200"></div>
+                    <span className="flex-shrink mx-4">or continue with</span>
+                    <div className="flex-grow border-t border-gray-200"></div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    <GoogleLogin onSuccess={(user) => handleLoginSuccess(user, localStorage.getItem("luxe_token"))} />
+                    <FacebookLogin onSuccess={(user) => handleLoginSuccess(user, localStorage.getItem("luxe_token"))} />
+                  </div>
+
+                  <div className="flex flex-col gap-2 pt-2 border-t border-gray-100 text-center">
+                    <button
+                      onClick={() => setAuthMethod("phone")}
+                      className="text-xs font-semibold text-gray-600 hover:text-indigo-600 hover:underline"
+                    >
+                      Sign in with Mobile OTP
+                    </button>
+                    <button
+                      onClick={() => setAuthMethod("whatsapp")}
+                      className="text-xs font-semibold text-gray-600 hover:text-green-600 hover:underline"
+                    >
+                      Sign in with WhatsApp Verification
+                    </button>
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
-          {/* EMAIL */}
-          <div className="space-y-1.5 text-xs">
-            <label className="font-bold text-gray-700 uppercase flex items-center space-x-1">
-              <FiMail /><span>Email Address</span>
-            </label>
-            <input
-              type="email" 
-              required 
-              placeholder="your.email@example.com"
-              className={`w-full bg-slate-50 border ${errors.email ? 'border-red-300' : 'border-transparent'} py-2.5 px-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary`}
-              value={email} 
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            {errors.email && <p className="text-red-500 text-[10px]">{errors.email}</p>}
-          </div>
-
-          {/* PASSWORD */}
-          {mode !== 'forgot' && (
-            <div className="space-y-1.5 text-xs">
-              <label className="font-bold text-gray-700 uppercase flex items-center space-x-1">
-                <FiLock /><span>Security Code</span>
-              </label>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"} 
-                  required 
-                  placeholder="••••••••"
-                  className={`w-full bg-slate-50 border ${errors.password ? 'border-red-300' : 'border-transparent'} py-2.5 px-3 pr-10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary`}
-                  value={password} 
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-                <button 
-                  type="button" 
-                  onClick={() => setShowPassword(!showPassword)} 
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  {showPassword ? <FiEyeOff size={14} /> : <FiEye size={14} />}
-                </button>
-              </div>
-              {errors.password && <p className="text-red-500 text-[10px]">{errors.password}</p>}
-              
-              {/* Password Strength */}
-              {mode === 'register' && password && (
-                <div className="mt-1 flex space-x-1">
-                  {[1,2,3].map(i => {
-                    const { strength } = getPasswordStrength(password);
-                    return (
-                      <div 
-                        key={i} 
-                        className={`h-1 w-full rounded ${
-                          strength === 'weak' && i === 1 ? 'bg-red-500' : 
-                          strength === 'medium' && i <= 2 ? 'bg-yellow-500' : 
-                          strength === 'strong' ? 'bg-green-500' : 
-                          'bg-gray-200'
-                        }`} 
-                      />
-                    );
-                  })}
+          {/* ==========================================
+              REGISTER / FORGOT PASSWORD MODES
+             ========================================== */}
+          {mode !== "login" && (
+            <form onSubmit={handleFormSubmit} className="space-y-4">
+              {mode === "register" && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-gray-900">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Vishal Nishad"
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
                 </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-semibold text-gray-900">Email Address</label>
+                <input
+                  type="email"
+                  required
+                  placeholder="your.email@example.com"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+
+              {mode !== "forgot" && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-gray-900">Password</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••"
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {mode === "register" && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-gray-900">Confirm Password</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••"
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                  />
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-lg bg-black py-3 text-sm font-semibold text-white transition-all hover:bg-gray-800"
+              >
+                {loading ? "Processing..." : mode === "register" ? "Create Account" : "Send Reset Link"}
+              </button>
+            </form>
+          )}
+
+          {/* Mode Switchers (Hidden when accessing Admin Portal) */}
+          {!isAdminPortal && (
+            <div className="border-t border-gray-200 pt-5 text-center text-sm">
+              {mode === "login" ? (
+                <p className="text-gray-500">
+                  Don't Have an Account?{' '}
+                  <button onClick={() => setMode("register")} className="font-bold text-[#4F46E5] hover:underline">
+                    Sign Up
+                  </button>
+                </p>
+              ) : (
+                <p className="text-gray-500">
+                  Already have an account?{' '}
+                  <button onClick={() => setMode("login")} className="font-bold text-[#4F46E5] hover:underline">
+                    Sign In
+                  </button>
+                </p>
               )}
             </div>
           )}
 
-          {/* CONFIRM PASSWORD (Register Only) */}
-          {mode === 'register' && (
-            <div className="space-y-1.5 text-xs">
-              <label className="font-bold text-gray-700 uppercase flex items-center space-x-1">
-                <FiLock /><span>Confirm Password</span>
-              </label>
-              <input
-                type="password" 
-                required 
-                placeholder="••••••••"
-                className={`w-full bg-slate-50 border ${errors.confirmPassword ? 'border-red-300' : 'border-transparent'} py-2.5 px-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary`}
-                value={confirmPassword} 
-                onChange={(e) => setConfirmPassword(e.target.value)}
-              />
-              {errors.confirmPassword && <p className="text-red-500 text-[10px]">{errors.confirmPassword}</p>}
-            </div>
-          )}
-
-          {/* SUBMIT BUTTON */}
-          <button
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-black hover:bg-primary text-white text-[11px] font-bold uppercase tracking-widest py-3.5 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-          >
-            {loading ? 'Processing...' : 
-             mode === 'login' ? 'Authorize Access' : 
-             mode === 'register' ? 'Create Account' : 
-             'Send Reset Link'}
-          </button>
-        </form>
-
-        {/* ✅ FIXED: MODE SWITCHER - Moved outside form and improved */}
-        <div className="pt-4 border-t text-center text-xs space-y-3">
-          
-          {/* Primary Mode Switch */}
-          <div className="flex items-center justify-center space-x-2">
-            <span className="text-gray-500">
-              {mode === 'login' ? "New to Atelier?" : "Already have an account?"}
-            </span>
-            <button 
-              type="button"
-              onClick={() => handleModeSwitch(mode === 'login' ? 'register' : 'login')}
-              className="text-primary hover:text-primary/80 font-semibold underline decoration-dotted underline-offset-2 hover:underline-offset-4 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-opacity-50 rounded px-1"
-            >
-              {mode === 'login' ? "Create Account" : "Sign In"}
-            </button>
-          </div>
-
-          {/* Forgot Password Link */}
-          {mode === 'login' && (
-            <div className="flex items-center justify-center space-x-2">
-              <span className="text-gray-500">Forgot your password?</span>
-              <button 
-                type="button"
-                onClick={() => handleModeSwitch('forgot')}
-                className="text-primary hover:text-primary/80 font-semibold underline decoration-dotted underline-offset-2 hover:underline-offset-4 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-opacity-50 rounded px-1"
-              >
-                Reset here
-              </button>
-            </div>
-          )}
-
-          {/* Back to Login from Forgot Password */}
-          {mode === 'forgot' && (
-            <div className="flex items-center justify-center space-x-2">
-              <span className="text-gray-500">Remember your password?</span>
-              <button 
-                type="button"
-                onClick={() => handleModeSwitch('login')}
-                className="text-primary hover:text-primary/80 font-semibold underline decoration-dotted underline-offset-2 hover:underline-offset-4 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-opacity-50 rounded px-1"
-              >
-                Sign In
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* ✅ DEBUG: Current mode display (remove in production) */}
-        <div className="text-center">
-          <small className="text-gray-400 font-mono text-[10px]">
-            Current Mode: {mode}
-          </small>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

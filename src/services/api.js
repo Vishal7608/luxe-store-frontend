@@ -3,10 +3,13 @@ import axios from "axios";
 // ==============================
 // API Configuration
 // ==============================
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5001/api";
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:5001/api";
 
-// ✅ Base URL without /api (kyunki /health and / root pe hain, /api ke andar nahi)
-const BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:5001").replace('/api', '');
+// ✅ Base URL without /api
+const BASE_URL = (
+  import.meta.env.VITE_API_URL || "http://localhost:5001"
+).replace("/api", "");
 
 // ==============================
 // Axios Instance
@@ -25,28 +28,43 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("luxe_token");
-
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    return Promise.reject(error);
+  }
 );
 
 // ==============================
 // Response Interceptor
 // ==============================
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    console.log(
+      `✅ ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`
+    );
+    return response;
+  },
   (error) => {
-    if (error.response?.status === 401) {
-      console.warn("Unauthorized. Clearing session...");
-
+    // Handle different types of errors
+    if (error.code === 'ERR_NETWORK') {
+      console.error('❌ Network Error - Check if backend is running and CORS is configured');
+    } else if (error.response?.status === 429) {
+      console.error('❌ Rate limited - too many requests');
+    } else if (error.response?.status === 401) {
+      console.warn("❌ Unauthorized - Clearing session...");
       localStorage.removeItem("luxe_token");
       localStorage.removeItem("luxe_user");
     }
+
+    console.error(
+      `❌ ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
+      error.response?.status,
+      error.response?.data
+    );
 
     return Promise.reject(error);
   }
@@ -56,8 +74,12 @@ apiClient.interceptors.response.use(
 // Helper Functions
 // ==============================
 const saveAuthData = (token, user) => {
-  localStorage.setItem("luxe_token", token);
-  localStorage.setItem("luxe_user", JSON.stringify(user));
+  if (token) {
+    localStorage.setItem("luxe_token", token);
+  }
+  if (user) {
+    localStorage.setItem("luxe_user", JSON.stringify(user));
+  }
 };
 
 const clearAuthData = () => {
@@ -65,142 +87,46 @@ const clearAuthData = () => {
   localStorage.removeItem("luxe_user");
 };
 
-// ==============================
-// SECTION 2: AUTHENTICATION API (KEEP AS IS)
-// ==============================
-export const authAPI = {
-  // Register
-  register: async (userData) => {
-    try {
-      const response = await apiClient.post("/auth/register", userData);
+const extractAuthPayload = (data) => {
+  const token =
+    data?.token ||
+    data?.accessToken ||
+    data?.access_token ||
+    data?.data?.token ||
+    data?.data?.accessToken ||
+    data?.data?.access_token ||
+    data?.data?.data?.token ||
+    data?.data?.data?.accessToken;
 
-      const { token, user } = response.data;
+  const user =
+    data?.user ||
+    data?.admin ||
+    data?.data?.user ||
+    data?.data?.admin ||
+    data?.data?.data?.user ||
+    data?.data?.data?.admin ||
+    null;
 
-      if (token) {
-        saveAuthData(token, user);
-      }
+  return { token, user };
+};
 
-      return response.data;
-    } catch (error) {
-      throw error.response ? error.response.data : error;
-    }
-  },
+const handleError = (error) => {
+  throw error.response?.data || error.message || error;
+};
 
-  // Customer Login
-  login: async (email, password) => {
-    try {
-      const response = await apiClient.post("/auth/login", {
-        email,
-        password,
-      });
-
-      const { token, user } = response.data;
-
-      if (token) {
-        saveAuthData(token, user);
-      }
-
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-
-  // Admin Login
-  adminLogin: async (email, password) => {
-    try {
-      const response = await apiClient.post("/auth/admin/login", {
-        email,
-        password,
-      });
-
-      const { token, user } = response.data;
-
-      if (token) {
-        saveAuthData(token, user);
-      }
-
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-
-  // Logout
-  logout: async () => {
-    try {
-      // Call backend logout endpoint
-      await apiClient.post("/auth/logout");
-      
-      // Clear local data
-      clearAuthData();
-
-      return {
-        success: true,
-        message: "Logged out successfully",
-      };
-    } catch (error) {
-      // Even if backend fails, clear local data
-      clearAuthData();
-      
-      return {
-        success: true,
-        message: "Logged out locally",
-      };
-    }
-  },
-
-  // Get Profile
-  getProfile: async () => {
-    try {
-      const response = await apiClient.get("/auth/profile");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-
-  // Update Profile
-  updateProfile: async (profileData) => {
-    try {
-      const response = await apiClient.put("/auth/profile", profileData);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-
-  // Change Password
-  changePassword: async (passwordData) => {
-    try {
-      const response = await apiClient.post(
-        "/auth/change-password",
-        passwordData
-      );
-
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-
-  // Create Admin
-  createAdmin: async (adminData) => {
-    try {
-      const response = await apiClient.post("/auth/admin/create", adminData);
-
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+const request = async (config) => {
+  try {
+    const response = await apiClient(config);
+    return response.data;
+  } catch (error) {
+    handleError(error);
+  }
 };
 
 // ==============================
 // SECTION 1: ROOT & HEALTH ENDPOINTS
 // ==============================
 export const healthAPI = {
-  // Welcome Message
   getWelcome: async () => {
     try {
       const response = await axios.get(`${BASE_URL}/`);
@@ -210,7 +136,6 @@ export const healthAPI = {
     }
   },
 
-  // Health Check
   checkHealth: async () => {
     try {
       const response = await axios.get(`${BASE_URL}/health`);
@@ -222,1280 +147,1264 @@ export const healthAPI = {
 };
 
 // ==============================
-// SECTION 3: HOME PAGE ENDPOINTS
+// SECTION 2: AUTHENTICATION API
 // ==============================
-export const homeAPI = {
-  // Get Homepage Data (Banners, Featured Products)
-  getHomeData: async () => {
+export const authAPI = {
+  register: async (userData) => {
+    const data = await request({
+      method: "post",
+      url: "/auth/register",
+      data: userData,
+    });
+
+    const { token, user } = extractAuthPayload(data);
+    if (token) {
+      saveAuthData(token, user);
+    }
+    return data;
+  },
+
+  login: async (email, password) => {
+    const data = await request({
+      method: "post",
+      url: "/auth/login",
+      data: {
+        loginType: "email",
+        email,
+        password,
+      },
+    });
+
+    const { token, user } = extractAuthPayload(data);
+    if (token) {
+      saveAuthData(token, user);
+    }
+    return data;
+  },
+
+  loginWithEmail: async (email, password) => {
+    const data = await request({
+      method: "post",
+      url: "/auth/login",
+      data: {
+        loginType: "email",
+        email,
+        password,
+      },
+    });
+
+    const { token, user } = extractAuthPayload(data);
+    if (token) saveAuthData(token, user);
+    return data;
+  },
+
+  loginWithGoogle: async (accessToken) => {
+    const data = await request({
+      method: "post",
+      url: "/auth/login",
+      data: {
+        loginType: "google",
+        accessToken,
+      },
+    });
+
+    const { token, user } = extractAuthPayload(data);
+    if (token) saveAuthData(token, user);
+    return data;
+  },
+
+  loginWithFacebook: async (accessToken) => {
+    const data = await request({
+      method: "post",
+      url: "/auth/login",
+      data: {
+        loginType: "facebook",
+        accessToken,
+      },
+    });
+
+    const { token, user } = extractAuthPayload(data);
+    if (token) saveAuthData(token, user);
+    return data;
+  },
+
+  loginWithPhone: async (phone, otp) => {
+    const data = await request({
+      method: "post",
+      url: "/auth/login",
+      data: {
+        loginType: "phone",
+        phone,
+        otp,
+      },
+    });
+
+    const { token, user } = extractAuthPayload(data);
+    if (token) saveAuthData(token, user);
+    return data;
+  },
+
+  loginWithWhatsApp: async (phone, otp) => {
+    const data = await request({
+      method: "post",
+      url: "/auth/login",
+      data: {
+        loginType: "whatsapp",
+        phone,
+        otp,
+      },
+    });
+
+    const { token, user } = extractAuthPayload(data);
+    if (token) saveAuthData(token, user);
+    return data;
+  },
+
+  sendPhoneOTP: async (phone) => {
+    return request({
+      method: "post",
+      url: "/auth/send-otp",
+      data: { phone },
+    });
+  },
+
+  sendWhatsAppOTP: async (phone) => {
+    return request({
+      method: "post",
+      url: "/auth/whatsapp/send-otp",
+      data: { phone },
+    });
+  },
+
+  adminLogin: async (email, password) => {
+    const data = await request({
+      method: "post",
+      url: "/auth/admin/login",
+      data: {
+        email,
+        password,
+      },
+    });
+
+    const { token, user } = extractAuthPayload(data);
+    if (token) {
+      saveAuthData(token, user);
+    }
+    return data;
+  },
+
+  logout: async () => {
     try {
-      const response = await apiClient.get("/home");
-      return response.data;
+      await apiClient.post("/auth/logout");
+      clearAuthData();
+      return {
+        success: true,
+        message: "Logged out successfully",
+      };
     } catch (error) {
-      throw error.response?.data || error.message;
+      clearAuthData();
+      return {
+        success: true,
+        message: "Logged out locally",
+      };
     }
   },
 
-  // Get Site Statistics
-  getStats: async () => {
-    try {
-      const response = await apiClient.get("/stats");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getProfile: async () =>
+    request({
+      method: "get",
+      url: "/auth/profile",
+    }),
+
+  updateProfile: async (profileData) =>
+    request({
+      method: "put",
+      url: "/auth/profile",
+      data: profileData,
+    }),
+
+  changePassword: async (passwordData) =>
+    request({
+      method: "post",
+      url: "/auth/change-password",
+      data: passwordData,
+    }),
+
+  createAdmin: async (adminData) =>
+    request({
+      method: "post",
+      url: "/auth/admin/create",
+      data: adminData,
+    }),
+};
+
+// ==============================
+// SECTION 3: HOME PAGE ENDPOINTS
+// ==============================
+export const homeAPI = {
+  getHomeData: async () =>
+    request({
+      method: "get",
+      url: "/home",
+    }),
+
+  getStats: async () =>
+    request({
+      method: "get",
+      url: "/stats",
+    }),
 };
 
 // ==============================
 // SECTION 4: SHOP/PRODUCTS ENDPOINTS
 // ==============================
 export const shopAPI = {
-  // Get All Products (with pagination and filters)
-  getProducts: async (params = {}) => {
-    try {
-      const response = await apiClient.get("/shop/products", { params });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getProducts: async (params = {}) =>
+    request({
+      method: "get",
+      url: "/shop/products",
+      params,
+    }),
 
-  // Get Single Product Details
-  getProductById: async (id) => {
-    try {
-      const response = await apiClient.get(`/shop/products/${id}`);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getProductById: async (id) =>
+    request({
+      method: "get",
+      url: `/shop/products/${id}`,
+    }),
 
-  // Get All Categories
-  getCategories: async () => {
-    try {
-      const response = await apiClient.get("/shop/categories");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getCategories: async () =>
+    request({
+      method: "get",
+      url: "/shop/categories",
+    }),
 
-  // Search Products
-  searchProducts: async (query) => {
-    try {
-      const response = await apiClient.get("/shop/search", {
-        params: { q: query },
-      });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  searchProducts: async (query) =>
+    request({
+      method: "get",
+      url: "/shop/search",
+      params: {
+        q: query,
+      },
+    }),
 };
 
 // ==============================
 // SECTION 5: SHOPPING CART ENDPOINTS
 // ==============================
 export const cartAPI = {
-  // Get User Cart
-  getCart: async () => {
-    try {
-      const response = await apiClient.get("/cart");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getCart: async () =>
+    request({
+      method: "get",
+      url: "/cart",
+    }),
 
-  // Get Cart Item Count
-  getCartCount: async () => {
-    try {
-      const response = await apiClient.get("/cart/count");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getCartCount: async () =>
+    request({
+      method: "get",
+      url: "/cart/count",
+    }),
 
-  // Add Product to Cart
   addToCart: async (productId, quantity = 1, variant = null) => {
-    try {
-      const response = await apiClient.post("/cart/add", {
+    // Handle object parameter
+    if (productId && typeof productId === 'object') {
+      const payload = productId;
+      return request({
+        method: "post",
+        url: "/cart/add",
+        data: {
+          productId: payload.productId || payload.id || payload._id,
+          quantity: payload.quantity ?? 1,
+          variant: payload.variant ?? null,
+        },
+      });
+    }
+    
+    // Handle individual parameters
+    return request({
+      method: "post",
+      url: "/cart/add",
+      data: {
         productId,
         quantity,
         variant,
-      });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
+      },
+    });
   },
 
-  // Update Cart Item Quantity
-  updateCartItem: async (itemId, quantity) => {
-    try {
-      const response = await apiClient.put(`/cart/items/${itemId}`, {
+  // Alias for compatibility with AppContext
+  addItem: async (productId, quantity = 1, variant = null) => {
+    if (productId && typeof productId === 'object') {
+      const payload = productId;
+      return request({
+        method: "post",
+        url: "/cart/add",
+        data: {
+          productId: payload.productId || payload.id || payload._id,
+          quantity: payload.quantity ?? 1,
+          variant: payload.variant ?? null,
+        },
+      });
+    }
+    
+    return request({
+      method: "post",
+      url: "/cart/add",
+      data: {
+        productId,
         quantity,
-      });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
+        variant,
+      },
+    });
   },
 
-  // Remove Item from Cart
-  removeCartItem: async (itemId) => {
-    try {
-      const response = await apiClient.delete(`/cart/items/${itemId}`);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  updateCartItem: async (itemId, quantity) =>
+    request({
+      method: "put",
+      url: `/cart/items/${itemId}`,
+      data: {
+        quantity,
+      },
+    }),
 
-  // Clear Entire Cart
-  clearCart: async () => {
-    try {
-      const response = await apiClient.delete("/cart/clear");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  // Alias for updating cart items
+  updateItem: async (itemId, quantity) =>
+    request({
+      method: "put",
+      url: `/cart/items/${itemId}`,
+      data: {
+        quantity,
+      },
+    }),
+
+  // Alias for AppContext's updateQuantity call
+  updateQuantity: async (itemId, quantity) =>
+    request({
+      method: "put",
+      url: `/cart/items/${itemId}`,
+      data: {
+        quantity,
+      },
+    }),
+
+  removeCartItem: async (itemId) =>
+    request({
+      method: "delete",
+      url: `/cart/items/${itemId}`,
+    }),
+
+  // Alias for removing cart items
+  removeItem: async (itemId) =>
+    request({
+      method: "delete",
+      url: `/cart/items/${itemId}`,
+    }),
+
+  clearCart: async () =>
+    request({
+      method: "delete",
+      url: "/cart/clear",
+    }),
 };
 
 // ==============================
 // SECTION 6: CHECKOUT ENDPOINTS
 // ==============================
 export const checkoutAPI = {
-  // Process Checkout & Create Order
-  processCheckout: async (checkoutData) => {
-    try {
-      const response = await apiClient.post("/checkout", checkoutData);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  processCheckout: async (checkoutData) =>
+    request({
+      method: "post",
+      url: "/checkout",
+      data: checkoutData,
+    }),
 
-  // Validate Coupon Code
-  validateCoupon: async (code) => {
-    try {
-      const response = await apiClient.post("/checkout/validate-coupon", {
+  verifyPayment: async (paymentDetails) =>
+    request({
+      method: "post",
+      url: "/checkout/verify-payment",
+      data: paymentDetails,
+    }),
+
+  validateCoupon: async (code) =>
+    request({
+      method: "post",
+      url: "/checkout/validate-coupon",
+      data: {
         code,
-      });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+      },
+    }),
 
-  // Calculate Shipping Cost
-  calculateShipping: async (shippingData) => {
-    try {
-      const response = await apiClient.post(
-        "/checkout/calculate-shipping",
-        shippingData
-      );
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  calculateShipping: async (shippingData) =>
+    request({
+      method: "post",
+      url: "/checkout/calculate-shipping",
+      data: shippingData,
+    }),
 };
 
 // ==============================
 // SECTION 7: USER ORDERS ENDPOINTS
 // ==============================
 export const orderAPI = {
-  // Get User's Orders List
-  getMyOrders: async (params = {}) => {
-    try {
-      const response = await apiClient.get("/orders", { params });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getMyOrders: async (params = {}) =>
+    request({
+      method: "get",
+      url: "/orders",
+      params,
+    }),
 
-  // Get Single Order Details
-  getOrderById: async (id) => {
-    try {
-      const response = await apiClient.get(`/orders/${id}`);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getOrderById: async (id) =>
+    request({
+      method: "get",
+      url: `/orders/${id}`,
+    }),
 
-  // Cancel User's Order
-  cancelOrder: async (id, reason = "") => {
-    try {
-      const response = await apiClient.post(`/orders/${id}/cancel`, {
+  createOrder: async (orderData) =>
+    request({
+      method: "post",
+      url: "/orders",
+      data: orderData,
+    }),
+
+  cancelOrder: async (id, reason = "") =>
+    request({
+      method: "post",
+      url: `/orders/${id}/cancel`,
+      data: {
         reason,
-      });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+      },
+    }),
 
-  // Track Order Status
-  trackOrder: async (id) => {
-    try {
-      const response = await apiClient.get(`/orders/${id}/track`);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  trackOrder: async (id) =>
+    request({
+      method: "get",
+      url: `/orders/${id}/track`,
+    }),
+
+  updateOrder: async (id, updateData) =>
+    request({
+      method: "put",
+      url: `/orders/${id}`,
+      data: updateData,
+    }),
 };
 
 // ==============================
 // SECTION 8: WISHLIST ENDPOINTS
 // ==============================
 export const wishlistAPI = {
-  // Get User Wishlist
-  getWishlist: async () => {
-    try {
-      const response = await apiClient.get("/wishlist");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getWishlist: async () =>
+    request({
+      method: "get",
+      url: "/wishlist",
+    }),
 
-  // Add Product to Wishlist
-  addToWishlist: async (productId) => {
-    try {
-      const response = await apiClient.post("/wishlist/add", { productId });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  addToWishlist: async (productId) =>
+    request({
+      method: "post",
+      url: "/wishlist/add",
+      data: {
+        productId,
+      },
+    }),
 
-  // Remove Product from Wishlist
-  removeFromWishlist: async (productId) => {
-    try {
-      const response = await apiClient.delete(`/wishlist/${productId}`);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  removeFromWishlist: async (productId) =>
+    request({
+      method: "delete",
+      url: `/wishlist/${productId}`,
+    }),
 
-  // Clear Entire Wishlist
-  clearWishlist: async () => {
-    try {
-      const response = await apiClient.delete("/wishlist");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  clearWishlist: async () =>
+    request({
+      method: "delete",
+      url: "/wishlist",
+    }),
 
-  // Move Product to Cart
-  moveToCart: async (productId) => {
-    try {
-      const response = await apiClient.post(
-        `/wishlist/${productId}/move-to-cart`
-      );
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  moveToCart: async (productId) =>
+    request({
+      method: "post",
+      url: `/wishlist/${productId}/move-to-cart`,
+    }),
 };
 
 // ==============================
 // SECTION 9: REVIEWS ENDPOINTS
 // ==============================
 export const reviewAPI = {
-  // Get Product Reviews
-  getProductReviews: async (productId, params = {}) => {
-    try {
-      const response = await apiClient.get(`/reviews/product/${productId}`, {
-        params,
-      });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getProductReviews: async (productId, params = {}) =>
+    request({
+      method: "get",
+      url: `/reviews/product/${productId}`,
+      params,
+    }),
 
-  // Get User's Reviews
-  getMyReviews: async () => {
-    try {
-      const response = await apiClient.get("/reviews/my-reviews");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getMyReviews: async () =>
+    request({
+      method: "get",
+      url: "/reviews/my-reviews",
+    }),
 
-  // Create New Review
-  createReview: async (reviewData) => {
-    try {
-      const response = await apiClient.post("/reviews", reviewData);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  createReview: async (reviewData) =>
+    request({
+      method: "post",
+      url: "/reviews",
+      data: reviewData,
+    }),
 
-  // Update Review
-  updateReview: async (id, reviewData) => {
-    try {
-      const response = await apiClient.put(`/reviews/${id}`, reviewData);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  updateReview: async (id, reviewData) =>
+    request({
+      method: "put",
+      url: `/reviews/${id}`,
+      data: reviewData,
+    }),
 
-  // Delete Review
-  deleteReview: async (id) => {
-    try {
-      const response = await apiClient.delete(`/reviews/${id}`);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  deleteReview: async (id) =>
+    request({
+      method: "delete",
+      url: `/reviews/${id}`,
+    }),
 };
 
 // ==============================
 // SECTION 10: USER PROFILE ENDPOINTS
 // ==============================
 export const profileAPI = {
-  // Get User Profile
-  getProfile: async () => {
-    try {
-      const response = await apiClient.get("/profile");
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  getProfile: async () =>
+    request({
+      method: "get",
+      url: "/profile",
+    }),
 
-  // Update Profile Info
-  updateProfile: async (profileData) => {
-    try {
-      const response = await apiClient.put("/profile", profileData);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  updateProfile: async (profileData) =>
+    request({
+      method: "put",
+      url: "/profile",
+      data: profileData,
+    }),
 
-  // Change Account Password
-  changePassword: async (passwordData) => {
-    try {
-      const response = await apiClient.post(
-        "/profile/change-password",
-        passwordData
-      );
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
+  changePassword: async (passwordData) =>
+    request({
+      method: "post",
+      url: "/profile/change-password",
+      data: passwordData,
+    }),
 
-  // Upload Profile Avatar
   uploadAvatar: async (file) => {
-    try {
-      const formData = new FormData();
-      formData.append("avatar", file);
+    const formData = new FormData();
+    formData.append("avatar", file);
 
-      const response = await apiClient.post("/profile/avatar", formData, {
+    return request({
+      method: "post",
+      url: "/profile/avatar",
+      data: formData,
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+  },
+
+  addAddress: async (addressData) =>
+    request({
+      method: "post",
+      url: "/profile/addresses",
+      data: addressData,
+    }),
+
+  updateAddress: async (addressId, addressData) =>
+    request({
+      method: "put",
+      url: `/profile/addresses/${addressId}`,
+      data: addressData,
+    }),
+
+  deleteAddress: async (addressId) =>
+    request({
+      method: "delete",
+      url: `/profile/addresses/${addressId}`,
+    }),
+
+  setDefaultAddress: async (addressId) =>
+    request({
+      method: "post",
+      url: `/profile/addresses/${addressId}/default`,
+    }),
+};
+
+// ==============================
+// SECTION 11: INSTAGRAM REELS API
+// ==============================
+export const reelsAPI = {
+  getPublic: async (limit = 5) =>
+    request({
+      method: "get",
+      url: `/reels?limit=${limit}`,
+      timeout: 8000,
+    }),
+
+  getAdmin: async () =>
+    request({
+      method: "get",
+      url: "/admin/reels",
+      timeout: 15000,
+    }),
+
+  create: async (data) =>
+    request({
+      method: "post",
+      url: "/admin/reels",
+      data,
+    }),
+
+  update: async (id, data) =>
+    request({
+      method: "put",
+      url: `/admin/reels/${id}`,
+      data,
+    }),
+
+  remove: async (id) =>
+    request({
+      method: "delete",
+      url: `/admin/reels/${id}`,
+    }),
+
+  toggle: async (id) =>
+    request({
+      method: "patch",
+      url: `/admin/reels/${id}/toggle`,
+    }),
+};
+
+// ==============================
+// SECTION 12: PAYMENT API (RAZORPAY)
+// ==============================
+export const paymentAPI = {
+  createOrder: async (orderId) =>
+    request({
+      method: "post",
+      url: "/payment/create-order",
+      data: { orderId },
+    }),
+
+  verifyPayment: async (paymentData) =>
+    request({
+      method: "post",
+      url: "/payment/verify",
+      data: paymentData,
+    }),
+
+  handleFailure: async (failureData) =>
+    request({
+      method: "post",
+      url: "/payment/failure",
+      data: failureData,
+    }),
+
+  getPaymentDetails: async (paymentId) =>
+    request({
+      method: "get",
+      url: `/payment/${paymentId}`,
+    }),
+};
+
+// ==============================
+// SECTION 13: ADMIN ENDPOINTS
+// ==============================
+export const adminAPI = {
+  // Admin Dashboard
+  dashboard: {
+    getStats: async () =>
+      request({
+        method: "get",
+        url: "/admin/dashboard/stats",
+      }),
+
+    getRecentActivity: async () =>
+      request({
+        method: "get",
+        url: "/admin/dashboard/recent-activity",
+      }),
+  },
+
+  // Admin Products
+  products: {
+    getAll: async (params = {}) =>
+      request({
+        method: "get",
+        url: "/admin/products",
+        params,
+      }),
+
+    getById: async (id) =>
+      request({
+        method: "get",
+        url: `/admin/products/${id}`,
+      }),
+
+    create: async (productData) =>
+      request({
+        method: "post",
+        url: "/admin/products",
+        data: productData,
+      }),
+
+    update: async (id, productData) =>
+      request({
+        method: "put",
+        url: `/admin/products/${id}`,
+        data: productData,
+      }),
+
+    delete: async (id) =>
+      request({
+        method: "delete",
+        url: `/admin/products/${id}`,
+      }),
+
+    deleteImage: async (productId, imageId) =>
+      request({
+        method: "delete",
+        url: `/admin/products/${productId}/images/${imageId}`,
+      }),
+
+    bulkUpdateStatus: async (statusData) =>
+      request({
+        method: "post",
+        url: "/admin/products/bulk/status",
+        data: statusData,
+      }),
+
+    bulkUpload: async (file) => {
+      const formData = new FormData();
+      formData.append("excelFile", file);
+
+      return request({
+        method: "post",
+        url: "/admin/products/bulk/upload",
+        data: formData,
         headers: {
           "Content-Type": "multipart/form-data",
         },
       });
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-
-  // Add New Address
-  addAddress: async (addressData) => {
-    try {
-      const response = await apiClient.post("/profile/addresses", addressData);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-
-  // Update Address
-  updateAddress: async (addressId, addressData) => {
-    try {
-      const response = await apiClient.put(
-        `/profile/addresses/${addressId}`,
-        addressData
-      );
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-
-  // Delete Address
-  deleteAddress: async (addressId) => {
-    try {
-      const response = await apiClient.delete(`/profile/addresses/${addressId}`);
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-
-  // Set Default Address
-  setDefaultAddress: async (addressId) => {
-    try {
-      const response = await apiClient.post(
-        `/profile/addresses/${addressId}/default`
-      );
-      return response.data;
-    } catch (error) {
-      throw error.response?.data || error.message;
-    }
-  },
-};
-
-// ==============================
-// SECTION 11-19: ADMIN ENDPOINTS
-// ==============================
-export const adminAPI = {
-  // ==============================
-  // SECTION 11: ADMIN DASHBOARD
-  // ==============================
-  dashboard: {
-    // Get Dashboard Statistics
-    getStats: async () => {
-      try {
-        const response = await apiClient.get("/admin/dashboard/stats");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
     },
 
-    // Get Recent Activity
-    getRecentActivity: async () => {
-      try {
-        const response = await apiClient.get("/admin/dashboard/recent-activity");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-  },
-
-  // ==============================
-  // SECTION 12: ADMIN PRODUCTS
-  // ==============================
-  products: {
-    // List All Products (Admin View)
-    getAll: async (params = {}) => {
-      try {
-        const response = await apiClient.get("/admin/products", { params });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Get Single Product (Admin View)
-    getById: async (id) => {
-      try {
-        const response = await apiClient.get(`/admin/products/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Create New Product
-    create: async (productData) => {
-      try {
-        const response = await apiClient.post("/admin/products", productData);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Update Product
-    update: async (id, productData) => {
-      try {
-        const response = await apiClient.put(`/admin/products/${id}`, productData);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Delete Product
-    delete: async (id) => {
-      try {
-        const response = await apiClient.delete(`/admin/products/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Delete Product Image
-    deleteImage: async (productId, imageId) => {
-      try {
-        const response = await apiClient.delete(
-          `/admin/products/${productId}/images/${imageId}`
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Bulk Update Product Status
-    bulkUpdateStatus: async (statusData) => {
-      try {
-        const response = await apiClient.post(
-          "/admin/products/bulk/status",
-          statusData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Bulk Upload via Excel
-    bulkUpload: async (file) => {
-      try {
-        const formData = new FormData();
-        formData.append("excelFile", file);
-
-        const response = await apiClient.post(
-          "/admin/products/bulk/upload",
-          formData,
-          {
-            headers: {
-              "Content-Type": "multipart/form-data",
-            },
-          }
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Download Sample Excel
     getSampleExcel: () => {
       return `${API_BASE_URL}/admin/products/bulk/sample`;
     },
 
-    // Upload History
-    getUploadHistory: async () => {
-      try {
-        const response = await apiClient.get("/admin/products/bulk/history");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getUploadHistory: async () =>
+      request({
+        method: "get",
+        url: "/admin/products/bulk/history",
+      }),
   },
 
-  // ==============================
-  // SECTION 13: ADMIN INVENTORY
-  // ==============================
+  // Admin Inventory
   inventory: {
-    // Get Inventory Overview
-    getOverview: async () => {
-      try {
-        const response = await apiClient.get("/admin/inventory/overview");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getOverview: async () =>
+      request({
+        method: "get",
+        url: "/admin/inventory/overview",
+      }),
 
-    // Get Inventory List
-    getList: async (params = {}) => {
-      try {
-        const response = await apiClient.get("/admin/inventory/list", { params });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getList: async (params = {}) =>
+      request({
+        method: "get",
+        url: "/admin/inventory/list",
+        params,
+      }),
 
-    // Update Product Stock
-    updateStock: async (productId, stockData) => {
-      try {
-        const response = await apiClient.put(
-          `/admin/inventory/${productId}/stock`,
-          stockData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updateStock: async (productId, stockData) =>
+      request({
+        method: "put",
+        url: `/admin/inventory/${productId}/stock`,
+        data: stockData,
+      }),
 
-    // Bulk Stock Update
-    bulkUpdate: async (bulkData) => {
-      try {
-        const response = await apiClient.post(
-          "/admin/inventory/bulk-update",
-          bulkData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    bulkUpdate: async (bulkData) =>
+      request({
+        method: "post",
+        url: "/admin/inventory/bulk-update",
+        data: bulkData,
+      }),
 
-    // Get Low Stock Alerts
-    getAlerts: async () => {
-      try {
-        const response = await apiClient.get("/admin/inventory/alerts");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getAlerts: async () =>
+      request({
+        method: "get",
+        url: "/admin/inventory/alerts",
+      }),
 
-    // Get Stock Movement History
-    getHistory: async (productId) => {
-      try {
-        const response = await apiClient.get(
-          `/admin/inventory/${productId}/history`
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getHistory: async (productId) =>
+      request({
+        method: "get",
+        url: `/admin/inventory/${productId}/history`,
+      }),
   },
 
-  // ==============================
-  // SECTION 14: ADMIN ORDERS
-  // ==============================
+  // Admin Orders
   orders: {
-    // List All Orders
-    getAll: async (params = {}) => {
-      try {
-        const response = await apiClient.get("/admin/orders", { params });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getAll: async (params = {}) =>
+      request({
+        method: "get",
+        url: "/admin/orders",
+        params,
+      }),
 
-    // Get Order Statistics
-    getStats: async () => {
-      try {
-        const response = await apiClient.get("/admin/orders/stats");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getStats: async () =>
+      request({
+        method: "get",
+        url: "/admin/orders/stats",
+      }),
 
-    // Get Single Order
-    getById: async (id) => {
-      try {
-        const response = await apiClient.get(`/admin/orders/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getById: async (id) =>
+      request({
+        method: "get",
+        url: `/admin/orders/${id}`,
+      }),
 
-    // Update Order Status
-    updateStatus: async (id, status, notes = "") => {
-      try {
-        const response = await apiClient.put(`/admin/orders/${id}/status`, {
+    updateStatus: async (id, status, notes = "") =>
+      request({
+        method: "put",
+        url: `/admin/orders/${id}/status`,
+        data: {
           status,
           notes,
-        });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+        },
+      }),
 
-    // Update Payment Status
-    updatePaymentStatus: async (id, paymentStatus) => {
-      try {
-        const response = await apiClient.put(
-          `/admin/orders/${id}/payment-status`,
-          { paymentStatus }
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updatePaymentStatus: async (id, paymentStatus) =>
+      request({
+        method: "put",
+        url: `/admin/orders/${id}/payment-status`,
+        data: {
+          paymentStatus,
+        },
+      }),
 
-    // Cancel Order
-    cancel: async (id, reason = "") => {
-      try {
-        const response = await apiClient.post(`/admin/orders/${id}/cancel`, {
+    cancel: async (id, reason = "") =>
+      request({
+        method: "post",
+        url: `/admin/orders/${id}/cancel`,
+        data: {
           reason,
-        });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+        },
+      }),
 
-    // Generate Invoice
-    getInvoice: async (id) => {
-      try {
-        const response = await apiClient.get(`/admin/orders/${id}/invoice`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getInvoice: async (id) =>
+      request({
+        method: "get",
+        url: `/admin/orders/${id}/invoice`,
+      }),
 
-    // Send Order Update Email
-    sendUpdate: async (id, updateData) => {
-      try {
-        const response = await apiClient.post(
-          `/admin/orders/${id}/send-update`,
-          updateData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    sendUpdate: async (id, updateData) =>
+      request({
+        method: "post",
+        url: `/admin/orders/${id}/send-update`,
+        data: updateData,
+      }),
   },
 
-  // ==============================
-  // SECTION 15: ADMIN USERS
-  // ==============================
+  // Admin Users
   users: {
-    // List All Users
-    getAll: async (params = {}) => {
-      try {
-        const response = await apiClient.get("/admin/users", { params });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getAll: async (params = {}) =>
+      request({
+        method: "get",
+        url: "/admin/users",
+        params,
+      }),
 
-    // Get User Statistics
-    getStats: async () => {
-      try {
-        const response = await apiClient.get("/admin/users/stats");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getStats: async () =>
+      request({
+        method: "get",
+        url: "/admin/users/stats",
+      }),
 
-    // Search Users
-    search: async (query) => {
-      try {
-        const response = await apiClient.get("/admin/users/search", {
-          params: { q: query },
-        });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    search: async (query) =>
+      request({
+        method: "get",
+        url: "/admin/users/search",
+        params: {
+          q: query,
+        },
+      }),
 
-    // Get Single User
-    getById: async (id) => {
-      try {
-        const response = await apiClient.get(`/admin/users/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getById: async (id) =>
+      request({
+        method: "get",
+        url: `/admin/users/${id}`,
+      }),
 
-    // Get User's Orders
-    getUserOrders: async (id) => {
-      try {
-        const response = await apiClient.get(`/admin/users/${id}/orders`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getUserOrders: async (id) =>
+      request({
+        method: "get",
+        url: `/admin/users/${id}/orders`,
+      }),
 
-    // Update User Status
-    updateStatus: async (id, status) => {
-      try {
-        const response = await apiClient.put(`/admin/users/${id}/status`, {
+    updateStatus: async (id, status) =>
+      request({
+        method: "put",
+        url: `/admin/users/${id}/status`,
+        data: {
           status,
-        });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+        },
+      }),
 
-    // Update User Role
-    updateRole: async (id, role) => {
-      try {
-        const response = await apiClient.put(`/admin/users/${id}/role`, {
+    updateRole: async (id, role) =>
+      request({
+        method: "put",
+        url: `/admin/users/${id}/role`,
+        data: {
           role,
-        });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+        },
+      }),
 
-    // Delete User
-    delete: async (id) => {
-      try {
-        const response = await apiClient.delete(`/admin/users/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    delete: async (id) =>
+      request({
+        method: "delete",
+        url: `/admin/users/${id}`,
+      }),
   },
 
-  // ==============================
-  // SECTION 16: ADMIN CATEGORIES
-  // ==============================
+  // Admin Categories
   categories: {
-    // List All Categories
-    getAll: async () => {
-      try {
-        const response = await apiClient.get("/admin/categories");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
+    getAll: async () =>
+      request({
+        method: "get",
+        url: "/admin/categories",
+      }),
+
+    getTree: async () =>
+      request({
+        method: "get",
+        url: "/admin/categories/tree",
+      }),
+
+    getById: async (id) =>
+      request({
+        method: "get",
+        url: `/admin/categories/${id}`,
+      }),
+
+    create: async (categoryData) =>
+      request({
+        method: "post",
+        url: "/admin/categories",
+        data: categoryData,
+      }),
+
+    // 📂 DYNAMIC IMAGE UPLOADER METHOD (Added)
+    uploadImage: async (file) => {
+      const formData = new FormData();
+      formData.append("categoryImage", file);
+      return request({
+        method: "post",
+        url: "/admin/categories/upload",
+        data: formData,
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      });
     },
 
-    // Get Category Tree Structure
-    getTree: async () => {
-      try {
-        const response = await apiClient.get("/admin/categories/tree");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    update: async (id, categoryData) =>
+      request({
+        method: "put",
+        url: `/admin/categories/${id}`,
+        data: categoryData,
+      }),
 
-    // Get Single Category
-    getById: async (id) => {
-      try {
-        const response = await apiClient.get(`/admin/categories/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    delete: async (id) =>
+      request({
+        method: "delete",
+        url: `/admin/categories/${id}`,
+      }),
 
-    // Create New Category
-    create: async (categoryData) => {
-      try {
-        const response = await apiClient.post("/admin/categories", categoryData);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Update Category
-    update: async (id, categoryData) => {
-      try {
-        const response = await apiClient.put(
-          `/admin/categories/${id}`,
-          categoryData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Delete Category
-    delete: async (id) => {
-      try {
-        const response = await apiClient.delete(`/admin/categories/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
-
-    // Update Category Order
-    updateOrder: async (orderData) => {
-      try {
-        const response = await apiClient.post(
-          "/admin/categories/update-order",
-          orderData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updateOrder: async (orderData) =>
+      request({
+        method: "post",
+        url: "/admin/categories/update-order",
+        data: orderData,
+      }),
   },
 
-  // ==============================
-  // SECTION 17: ADMIN BANNERS
-  // ==============================
+  // Admin Banners
   banners: {
-    // List Regular Banners
-    getAll: async () => {
-      try {
-        const response = await apiClient.get("/admin/banners");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getAll: async () =>
+      request({
+        method: "get",
+        url: "/admin/banners",
+      }),
 
-    // Get Single Banner
-    getById: async (id) => {
-      try {
-        const response = await apiClient.get(`/admin/banners/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getById: async (id) =>
+      request({
+        method: "get",
+        url: `/admin/banners/${id}`,
+      }),
 
-    // Create Regular Banner
-    create: async (bannerData) => {
-      try {
-        const response = await apiClient.post("/admin/banners", bannerData);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    create: async (bannerData) =>
+      request({
+        method: "post",
+        url: "/admin/banners",
+        data: bannerData,
+      }),
 
-    // Update Banner
-    update: async (id, bannerData) => {
-      try {
-        const response = await apiClient.put(`/admin/banners/${id}`, bannerData);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    update: async (id, bannerData) =>
+      request({
+        method: "put",
+        url: `/admin/banners/${id}`,
+        data: bannerData,
+      }),
 
-    // Delete Banner
-    delete: async (id) => {
-      try {
-        const response = await apiClient.delete(`/admin/banners/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    delete: async (id) =>
+      request({
+        method: "delete",
+        url: `/admin/banners/${id}`,
+      }),
 
-    // List Hero Banners
-    getHeroBanners: async () => {
-      try {
-        const response = await apiClient.get("/admin/banners/hero");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getHeroBanners: async () =>
+      request({
+        method: "get",
+        url: "/admin/banners/hero",
+      }),
 
-    // Get Single Hero Banner
-    getHeroById: async (id) => {
-      try {
-        const response = await apiClient.get(`/admin/banners/hero/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getHeroById: async (id) =>
+      request({
+        method: "get",
+        url: `/admin/banners/hero/${id}`,
+      }),
 
-    // Create Hero Banner
-    createHero: async (heroData) => {
-      try {
-        const response = await apiClient.post("/admin/banners/hero", heroData);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    createHero: async (heroData) =>
+      request({
+        method: "post",
+        url: "/admin/banners/hero",
+        data: heroData,
+      }),
 
-    // Update Hero Banner
-    updateHero: async (id, heroData) => {
-      try {
-        const response = await apiClient.put(
-          `/admin/banners/hero/${id}`,
-          heroData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updateHero: async (id, heroData) =>
+      request({
+        method: "put",
+        url: `/admin/banners/hero/${id}`,
+        data: heroData,
+      }),
 
-    // Delete Hero Banner
-    deleteHero: async (id) => {
-      try {
-        const response = await apiClient.delete(`/admin/banners/hero/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    deleteHero: async (id) =>
+      request({
+        method: "delete",
+        url: `/admin/banners/hero/${id}`,
+      }),
 
-    // Update Banner Order
-    updateOrder: async (orderData) => {
-      try {
-        const response = await apiClient.post(
-          "/admin/banners/update-order",
-          orderData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updateOrder: async (orderData) =>
+      request({
+        method: "post",
+        url: "/admin/banners/update-order",
+        data: orderData,
+      }),
   },
 
-  // ==============================
-  // SECTION 18: ADMIN COUPONS
-  // ==============================
+  // Admin Coupons
   coupons: {
-    // List All Coupons
-    getAll: async (params = {}) => {
-      try {
-        const response = await apiClient.get("/admin/coupons", { params });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getAll: async (params = {}) =>
+      request({
+        method: "get",
+        url: "/admin/coupons",
+        params,
+      }),
 
-    // Get Coupon Statistics
-    getStats: async () => {
-      try {
-        const response = await apiClient.get("/admin/coupons/stats");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getStats: async () =>
+      request({
+        method: "get",
+        url: "/admin/coupons/stats",
+      }),
 
-    // Get Single Coupon
-    getById: async (id) => {
-      try {
-        const response = await apiClient.get(`/admin/coupons/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getById: async (id) =>
+      request({
+        method: "get",
+        url: `/admin/coupons/${id}`,
+      }),
 
-    // Create New Coupon
-    create: async (couponData) => {
-      try {
-        const response = await apiClient.post("/admin/coupons", couponData);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    create: async (couponData) =>
+      request({
+        method: "post",
+        url: "/admin/coupons",
+        data: couponData,
+      }),
 
-    // Update Coupon
-    update: async (id, couponData) => {
-      try {
-        const response = await apiClient.put(`/admin/coupons/${id}`, couponData);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    update: async (id, couponData) =>
+      request({
+        method: "put",
+        url: `/admin/coupons/${id}`,
+        data: couponData,
+      }),
 
-    // Delete Coupon
-    delete: async (id) => {
-      try {
-        const response = await apiClient.delete(`/admin/coupons/${id}`);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    delete: async (id) =>
+      request({
+        method: "delete",
+        url: `/admin/coupons/${id}`,
+      }),
 
-    // Validate Coupon
-    validate: async (code, orderData = {}) => {
-      try {
-        const response = await apiClient.post("/admin/coupons/validate", {
+    validate: async (code, orderData = {}) =>
+      request({
+        method: "post",
+        url: "/admin/coupons/validate",
+        data: {
           code,
           ...orderData,
-        });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+        },
+      }),
   },
 
-  // ==============================
-  // SECTION 19: ADMIN SETTINGS
-  // ==============================
+  // Admin Instagram Reels
+  reels: {
+    getAll: async () =>
+      request({
+        method: "get",
+        url: "/admin/reels",
+      }),
+
+    create: async (reelData) =>
+      request({
+        method: "post",
+        url: "/admin/reels",
+        data: reelData,
+      }),
+
+    update: async (id, reelData) =>
+      request({
+        method: "put",
+        url: `/admin/reels/${id}`,
+        data: reelData,
+      }),
+
+    toggle: async (id) =>
+      request({
+        method: "patch",
+        url: `/admin/reels/${id}/toggle`,
+      }),
+
+    delete: async (id) =>
+      request({
+        method: "delete",
+        url: `/admin/reels/${id}`,
+      }),
+
+    remove: async (id) =>
+      request({
+        method: "delete",
+        url: `/admin/reels/${id}`,
+      }),
+  },
+
+  // Admin Settings
   settings: {
-    // Get All Settings
-    getAll: async () => {
-      try {
-        const response = await apiClient.get("/admin/settings");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    getAll: async () =>
+      request({
+        method: "get",
+        url: "/admin/settings",
+      }),
 
-    // Update General Settings
-    updateGeneral: async (generalData) => {
-      try {
-        const response = await apiClient.put(
-          "/admin/settings/general",
-          generalData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updateGeneral: async (generalData) =>
+      request({
+        method: "put",
+        url: "/admin/settings/general",
+        data: generalData,
+      }),
 
-    // Update Social Media Settings
-    updateSocial: async (socialData) => {
-      try {
-        const response = await apiClient.put(
-          "/admin/settings/social",
-          socialData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updateSocial: async (socialData) =>
+      request({
+        method: "put",
+        url: "/admin/settings/social",
+        data: socialData,
+      }),
 
-    // Update Email Settings
-    updateEmail: async (emailData) => {
-      try {
-        const response = await apiClient.put("/admin/settings/email", emailData);
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updateEmail: async (emailData) =>
+      request({
+        method: "put",
+        url: "/admin/settings/email",
+        data: emailData,
+      }),
 
-    // Update Payment Settings
-    updatePayment: async (paymentData) => {
-      try {
-        const response = await apiClient.put(
-          "/admin/settings/payment",
-          paymentData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updatePayment: async (paymentData) =>
+      request({
+        method: "put",
+        url: "/admin/settings/payment",
+        data: paymentData,
+      }),
 
-    // Update Inventory Settings
-    updateInventory: async (inventoryData) => {
-      try {
-        const response = await apiClient.put(
-          "/admin/settings/inventory",
-          inventoryData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    updateInventory: async (inventoryData) =>
+      request({
+        method: "put",
+        url: "/admin/settings/inventory",
+        data: inventoryData,
+      }),
 
-    // Test Email Configuration
-    testEmail: async (testData) => {
-      try {
-        const response = await apiClient.post(
-          "/admin/settings/email/test",
-          testData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    testEmail: async (testData) =>
+      request({
+        method: "post",
+        url: "/admin/settings/email/test",
+        data: testData,
+      }),
 
-    // Reset Settings Section
-    resetSection: async (section) => {
-      try {
-        const response = await apiClient.post("/admin/settings/reset", {
+    resetSection: async (section) =>
+      request({
+        method: "post",
+        url: "/admin/settings/reset",
+        data: {
           section,
-        });
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+        },
+      }),
 
-    // Export Settings as JSON
-    exportSettings: async () => {
-      try {
-        const response = await apiClient.get("/admin/settings/export");
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    exportSettings: async () =>
+      request({
+        method: "get",
+        url: "/admin/settings/export",
+      }),
 
-    // Import Settings from JSON
-    importSettings: async (settingsData) => {
-      try {
-        const response = await apiClient.post(
-          "/admin/settings/import",
-          settingsData
-        );
-        return response.data;
-      } catch (error) {
-        throw error.response?.data || error.message;
-      }
-    },
+    importSettings: async (settingsData) =>
+      request({
+        method: "post",
+        url: "/admin/settings/import",
+        data: settingsData,
+      }),
   },
 };
 
 // ==============================
-// LEGACY COMPATIBILITY (Optional)
+// LEGACY COMPATIBILITY
 // ==============================
 export const ProductService = {
   getAll: async (params) => {
     const data = await shopAPI.getProducts(params);
-    return { data: { success: true, products: data.products || data } };
+    return {
+      data: {
+        success: true,
+        products: data.products || data,
+      },
+    };
   },
+
   getById: async (id) => {
     const data = await shopAPI.getProductById(id);
-    return { data: { success: true, product: data.product || data } };
+    return {
+      data: {
+        success: true,
+        product: data.product || data,
+      },
+    };
   },
 };
 
 export const OrderService = {
   create: async (orderData) => {
     const data = await checkoutAPI.processCheckout(orderData);
-    return { data: { success: true, orderId: data.orderId || data.id } };
+    return {
+      data: {
+        success: true,
+        orderId: data.orderId || data.id,
+      },
+    };
   },
 };
 
-// ✅ ONLY ONE DEFAULT EXPORT
+// ==============================
+// DEFAULT EXPORT
+// ==============================
 export default apiClient;

@@ -1,4 +1,12 @@
-import { createContext, useState, useContext, useEffect } from 'react';
+import {
+  createContext,
+  useState,
+  useContext,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from 'react';
 import { mockProducts } from '../data/products';
 import { mockCategories } from '../data/categories';
 import { mockUsers } from '../data/users';
@@ -17,85 +25,196 @@ import {
   wishlistAPI,
   reviewAPI,
   profileAPI,
-  adminAPI
+  adminAPI,
+  reelsAPI,
 } from '../services/api';
 
 import toast from 'react-hot-toast';
 
 const AppContext = createContext();
-
 export const useApp = () => useContext(AppContext);
 
-// ==============================
-// Helpers
-// ==============================
-const safeJsonParse = (value, fallback = null) => {
-  try {
-    return value ? JSON.parse(value) : fallback;
-  } catch {
-    return fallback;
-  }
+// ─────────────────────────────────────────────────────────────
+// STORAGE HELPER
+// ─────────────────────────────────────────────────────────────
+const STORAGE_KEYS = {
+  products: 'luxe_products',
+  categories: 'luxe_categories',
+  users: 'luxe_users',
+  orders: 'luxe_orders',
+  cart: 'luxe_cart',
+  wishlist: 'luxe_wishlist',
+  siteSettings: 'luxe_site_settings',
+  reels: 'luxe_reels',
+  token: 'luxe_token',
+  user: 'luxe_user',
 };
 
+const storage = {
+  get: (key, fallback = null) => {
+    try {
+      const v = localStorage.getItem(key);
+      return v ? JSON.parse(v) : fallback;
+    } catch {
+      return fallback;
+    }
+  },
+  set: (key, value) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch { /* quota exceeded */ }
+  },
+  setRaw: (key, value) => {
+    try { localStorage.setItem(key, value); } catch { /* silent */ }
+  },
+  remove: (...keys) => {
+    keys.forEach((k) => { try { localStorage.removeItem(k); } catch { /* silent */ } });
+  },
+};
+
+// ─────────────────────────────────────────────────────────────
+// REQUEST CACHE
+// ─────────────────────────────────────────────────────────────
+class RequestCache {
+  constructor() {
+    this._cache   = new Map();
+    this._pending = new Map();
+  }
+
+  async get(key, fetcher, ttl = 30_000) {
+    const hit = this._cache.get(key);
+    if (hit && Date.now() - hit.ts < ttl) return hit.data;
+
+    if (this._pending.has(key)) return this._pending.get(key);
+
+    const promise = fetcher()
+      .then((data) => {
+        this._cache.set(key, { data, ts: Date.now() });
+        this._pending.delete(key);
+        return data;
+      })
+      .catch((err) => {
+        this._pending.delete(key);
+        throw err;
+      });
+
+    this._pending.set(key, promise);
+    return promise;
+  }
+
+  invalidate(...keys) {
+    keys.forEach((k) => {
+      this._cache.delete(k);
+      this._pending.delete(k);
+    });
+  }
+
+  clear() {
+    this._cache.clear();
+    this._pending.clear();
+  }
+
+  purge(maxAge = 120_000) {
+    const now = Date.now();
+    for (const [k, v] of this._cache) {
+      if (now - v.ts > maxAge) this._cache.delete(k);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// PURE HELPERS
+// ─────────────────────────────────────────────────────────────
 const getErrorMessage = (error, fallback = 'Something went wrong') => {
   if (!error) return fallback;
   if (typeof error === 'string') return error;
-  if (error?.response?.data?.message) return error.response.data.message;
-  if (error?.message) return error.message;
-  if (error?.data?.message) return error.data.message;
-  if (typeof error === 'object' && error.message) return error.message;
-  return fallback;
+  return (
+    error?.response?.data?.message ||
+    error?.data?.message          ||
+    error?.message                ||
+    fallback
+  );
 };
 
-const mapBackendProduct = (p, fallbackProduct = {}) => {
-  const product = p?.data || p;
+const mapBackendProduct = (p, fb = {}) => {
+  const d = p?.data || p;
   return {
-    id: product?._id || product?.id || fallbackProduct?.id || `PROD-${Date.now()}`,
-    _id: product?._id || product?.id,
-    name: product?.name || fallbackProduct?.name || 'Unnamed Product',
-    description: product?.description || fallbackProduct?.description || '',
-    price: Number(product?.price ?? fallbackProduct?.price ?? 0),
-    salePrice: product?.salePrice ?? fallbackProduct?.salePrice ?? null,
-    oldPrice: product?.salePrice ?? fallbackProduct?.oldPrice ?? null,
-    stock: product?.inventory?.quantity ?? product?.stock ?? fallbackProduct?.stock ?? 10,
-    image: product?.images?.[0]?.url || product?.image || fallbackProduct?.image || 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=600&auto=format&fit=crop',
-    images: product?.images?.map((img) => img.url || img).filter(Boolean) || fallbackProduct?.images || [],
-    category: product?.category?.name || product?.category || fallbackProduct?.category || 'General',
-    categoryId: product?.category?._id || product?.category?.id || null,
-    sku: product?.sku || fallbackProduct?.sku || 'SKU-GEN',
-    brand: product?.brand || fallbackProduct?.brand || 'Luxe Atelier',
-    rating: product?.rating?.average ?? product?.rating ?? fallbackProduct?.rating ?? 5.0,
-    reviewsCount: product?.rating?.count ?? product?.reviewsCount ?? fallbackProduct?.reviewsCount ?? 0,
-    tags: Array.isArray(product?.tags) ? product.tags : Array.isArray(fallbackProduct?.tags) ? fallbackProduct.tags : [],
-    isFeatured: product?.isFeatured ?? fallbackProduct?.isFeatured ?? false,
-    isActive: product?.isActive !== undefined ? product.isActive : fallbackProduct?.isActive !== undefined ? fallbackProduct.isActive : true,
-    createdAt: product?.createdAt || new Date().toISOString()
+    id:           d?._id || d?.id || fb?.id || `PROD-${Date.now()}`,
+    _id:          d?._id || d?.id,
+    name:         d?.name         || fb?.name         || 'Unnamed Product',
+    description:  d?.description  || fb?.description  || '',
+    price:        Number(d?.price          ?? fb?.price          ?? 0),
+    salePrice:    d?.salePrice    ?? fb?.salePrice    ?? null,
+    oldPrice:     d?.oldPrice     ?? fb?.oldPrice     ?? null,
+    stock:        d?.inventory?.quantity ?? d?.stock   ?? fb?.stock ?? 10,
+    image:        d?.images?.[0]?.url || d?.image || fb?.image ||
+                  'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=600&auto=format&fit=crop',
+    images:       d?.images?.map((i) => i.url || i).filter(Boolean) || fb?.images || [],
+    category:     d?.category?.name || d?.category || fb?.category || 'General',
+    categoryId:   d?.category?._id  || d?.category?.id || null,
+    sku:          d?.sku   || fb?.sku   || 'SKU-GEN',
+    brand:        d?.brand || fb?.brand || 'Luxe Atelier',
+    rating:       d?.rating?.average ?? d?.rating ?? fb?.rating ?? 5.0,
+    reviewsCount: d?.rating?.count   ?? d?.reviewsCount ?? fb?.reviewsCount ?? 0,
+    tags:         Array.isArray(d?.tags) ? d.tags : Array.isArray(fb?.tags) ? fb.tags : [],
+    isFeatured:   d?.isFeatured  ?? fb?.isFeatured  ?? false,
+    isActive:     d?.isActive    ?? fb?.isActive    ?? true,
+    createdAt:    d?.createdAt   || new Date().toISOString(),
   };
 };
 
-const extractProductsFromResponse = (response) => {
-  if (!response) return [];
-  if (Array.isArray(response)) return response;
-  if (Array.isArray(response.products)) return response.products;
-  if (Array.isArray(response.data)) return response.data;
-  if (Array.isArray(response.data?.products)) return response.data.products;
-  if (Array.isArray(response.data?.data?.products)) return response.data.data.products;
+const normalizeCartProduct = (product = {}) => {
+  const raw = product?.product || product?.data || product;
+  const id  = raw?._id || raw?.id || raw?.productId;
+  if (!id) return null;
+
+  const image =
+    raw?.image || raw?.thumbnail || raw?.thumbnailUrl ||
+    raw?.images?.[0]?.url || raw?.images?.[0] ||
+    'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=600&auto=format&fit=crop';
+
+  const images = Array.isArray(raw?.images)
+    ? raw.images.map((i) => i?.url || i).filter(Boolean)
+    : [image];
+
+  const category =
+    typeof raw?.category === 'object' ? raw.category?.name || 'General' : raw?.category || 'General';
+
+  return {
+    ...raw,
+    id,
+    _id:         raw?._id || id,
+    name:        raw?.name        || 'Product',
+    slug:        raw?.slug        || id,
+    description: raw?.description || '',
+    price:       Number(raw?.salePrice ?? raw?.price ?? 0),
+    salePrice:   raw?.salePrice   ?? null,
+    oldPrice:    raw?.oldPrice    ?? raw?.compareAtPrice ?? null,
+    image,
+    images,
+    category,
+    brand:       raw?.brand || 'Luxe Atelier',
+    stock:       raw?.inventory?.quantity ?? raw?.stock ?? 10,
+    quantity:    Number(raw?.quantity) || 1,
+    cartItemId:  raw?.cartItemId || raw?._id || raw?.id,
+  };
+};
+
+const extractArray = (res, ...paths) => {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  for (const path of paths) {
+    const parts = path.split('.');
+    let cur = res;
+    for (const p of parts) cur = cur?.[p];
+    if (Array.isArray(cur)) return cur;
+  }
   return [];
 };
 
-const extractCategoriesFromResponse = (response) => {
-  if (!response) return [];
-  if (Array.isArray(response)) return response;
-  if (Array.isArray(response.categories)) return response.categories;
-  if (Array.isArray(response.data)) return response.data;
-  if (Array.isArray(response.data?.categories)) return response.data.categories;
-  if (Array.isArray(response.data?.data?.categories)) return response.data.data.categories;
-  return [];
-};
-
-// ==============================
-// Default Site Settings
-// ==============================
+// ─────────────────────────────────────────────────────────────
+// DEFAULT SETTINGS
+// ─────────────────────────────────────────────────────────────
 const DEFAULT_SITE_SETTINGS = {
   heroTitle: 'Modern Luxury Fashion',
   heroSubtitle: 'NEW SEASON 2026',
@@ -121,458 +240,1131 @@ const DEFAULT_SITE_SETTINGS = {
   currency: 'INR (₹)',
   freeDeliveryThreshold: '999',
   copyright: 'Luxe Store India Ltd. All Rights Reserved.',
-  terms: '',
-  privacy: '',
-  returnPolicy: ''
+  terms: '', privacy: '', returnPolicy: '',
 };
 
+// DEBOUNCED HOOK
+const usePersist = (key, value, delay = 400) => {
+  const timer = useRef(null);
+  useEffect(() => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => storage.set(key, value), delay);
+    return () => clearTimeout(timer.current);
+  }, [key, value]);
+};
+
+// ═════════════════════════════════════════════════════════════
+//  PROVIDER
+// ═════════════════════════════════════════════════════════════
 export const AppProvider = ({ children }) => {
-  // ==============================
-  // Database States - ALL LOAD FROM LOCALSTORAGE
-  // ==============================
-  const [products, setProducts] = useState(() => {
-    try { const s = localStorage.getItem('luxe_products'); if (s) return JSON.parse(s); } catch {}
-    return mockProducts || [];
-  });
+  const cache            = useRef(new RequestCache());
+  const isMounted        = useRef(true);
+  const syncLock         = useRef(false);
+  const userFetchLock    = useRef(false);
+  const didSync          = useRef(false);
+  const didFetchUser     = useRef(false);
+  const prevAuthKey      = useRef('');
 
-  const [categories, setCategories] = useState(() => {
-    try { const s = localStorage.getItem('luxe_categories'); if (s) return JSON.parse(s); } catch {}
-    return mockCategories || [];
-  });
+  useEffect(() => {
+    const id = setInterval(() => cache.current.purge(120_000), 120_000);
+    return () => clearInterval(id);
+  }, []);
 
-  const [users, setUsers] = useState(() => {
-    try { const s = localStorage.getItem('luxe_users'); if (s) return JSON.parse(s); } catch {}
-    return mockUsers || [];
-  });
+  useEffect(() => {
+    isMounted.current = true;
+    return () => { isMounted.current = false; };
+  }, []);
 
-  const [orders, setOrders] = useState(() => {
-    try { const s = localStorage.getItem('luxe_orders'); if (s) return JSON.parse(s); } catch {}
-    return mockOrders || [];
-  });
-
-  const [reviews, setReviews] = useState(mockReviews || []);
-  const [coupons, setCoupons] = useState(mockCoupons || []);
+  // ─────────────────────────────────────────────────────────
+  // STATE
+  // ─────────────────────────────────────────────────────────
+  const [products,      setProducts]      = useState(() => storage.get(STORAGE_KEYS.products,      mockProducts      || []));
+  const [categories,    setCategories]    = useState(() => storage.get(STORAGE_KEYS.categories,    mockCategories    || []));
+  const [users,         setUsers]         = useState(() => storage.get(STORAGE_KEYS.users,         mockUsers         || []));
+  const [orders,        setOrders]        = useState(() => storage.get(STORAGE_KEYS.orders,        mockOrders        || []));
+  const [reviews,       setReviews]       = useState(mockReviews       || []);
+  const [coupons,       setCoupons]       = useState(mockCoupons       || []);
   const [notifications, setNotifications] = useState(mockNotifications || []);
+  const [reels,         setReels]         = useState(() => storage.get(STORAGE_KEYS.reels,         []));
+  const [cart,          setCart]          = useState(() => storage.get(STORAGE_KEYS.cart,          []));
+  const [wishlist,      setWishlist]      = useState(() => storage.get(STORAGE_KEYS.wishlist,      []));
+  const [siteSettings,  setSiteSettings]  = useState(() => ({
+    ...DEFAULT_SITE_SETTINGS,
+    ...storage.get(STORAGE_KEYS.siteSettings, {}),
+  }));
 
-  const [isBackendConnected, setIsBackendConnected] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [currentUser,         setCurrentUser]         = useState(() => storage.get(STORAGE_KEYS.user, null));
+  const [isAuthenticated,     setIsAuthenticated]     = useState(() => !!localStorage.getItem(STORAGE_KEYS.token));
+  const [isBackendConnected,  setIsBackendConnected]  = useState(false);
+  const [isLoading,           setIsLoading]           = useState(false);
+  const [appliedCoupon,       setAppliedCoupon]       = useState(null);
+  const [cartCount,           setCartCount]           = useState(0);
+  const [recentSearches,      setRecentSearches]      = useState(['Cashmere', 'Trench Coat']);
+  const [recentlyViewed,      setRecentlyViewed]      = useState([]);
+  const [homeData,            setHomeData]            = useState(null);
 
-  // ==============================
-  // Auth States
-  // ==============================
-  const [currentUser, setCurrentUser] = useState(() => safeJsonParse(localStorage.getItem('luxe_user'), null));
-  const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('luxe_token'));
+  usePersist(STORAGE_KEYS.products,     products);
+  usePersist(STORAGE_KEYS.categories,   categories);
+  usePersist(STORAGE_KEYS.users,        users);
+  usePersist(STORAGE_KEYS.orders,       orders);
+  usePersist(STORAGE_KEYS.cart,         cart);
+  usePersist(STORAGE_KEYS.wishlist,     wishlist);
+  usePersist(STORAGE_KEYS.siteSettings, siteSettings);
+  usePersist(STORAGE_KEYS.reels,        reels);
 
-  // ==============================
-  // Cart / Wishlist States - LOAD FROM LOCALSTORAGE
-  // ==============================
-  const [cart, setCart] = useState(() => {
-    try { const s = localStorage.getItem('luxe_cart'); if (s) return JSON.parse(s); } catch {}
-    return [];
-  });
+  useEffect(() => {
+    setCartCount(cart.reduce((s, i) => s + (Number(i.quantity) || 1), 0));
+  }, [cart]);
 
-  const [wishlist, setWishlist] = useState(() => {
-    try { const s = localStorage.getItem('luxe_wishlist'); if (s) return JSON.parse(s); } catch {}
-    return [];
-  });
+  const updateUserState = useCallback((data) => {
+    if (!data || !isMounted.current) return;
+    setCurrentUser(data);
+    storage.set(STORAGE_KEYS.user, data);
+  }, []);
 
-  const [appliedCoupon, setAppliedCoupon] = useState(null);
-  const [cartCount, setCartCount] = useState(0);
-
-  // ==============================
-  // Site Settings - LOAD FROM LOCALSTORAGE
-  // ==============================
-  const [siteSettings, setSiteSettings] = useState(() => {
-    try { const s = localStorage.getItem('luxe_site_settings'); if (s) return { ...DEFAULT_SITE_SETTINGS, ...JSON.parse(s) }; } catch {}
-    return DEFAULT_SITE_SETTINGS;
-  });
-
-  const [recentSearches, setRecentSearches] = useState(['Cashmere', 'Trench Coat']);
-  const [recentlyViewed, setRecentlyViewed] = useState([]);
-  const [homeData, setHomeData] = useState(null);
-
-  // ==============================
-  // AUTO-SAVE ALL DATA TO LOCALSTORAGE
-  // ==============================
-  useEffect(() => { try { localStorage.setItem('luxe_products', JSON.stringify(products)); } catch {} }, [products]);
-  useEffect(() => { try { localStorage.setItem('luxe_categories', JSON.stringify(categories)); } catch {} }, [categories]);
-  useEffect(() => { try { localStorage.setItem('luxe_users', JSON.stringify(users)); } catch {} }, [users]);
-  useEffect(() => { try { localStorage.setItem('luxe_orders', JSON.stringify(orders)); } catch {} }, [orders]);
-  useEffect(() => { try { localStorage.setItem('luxe_cart', JSON.stringify(cart)); } catch {} }, [cart]);
-  useEffect(() => { try { localStorage.setItem('luxe_wishlist', JSON.stringify(wishlist)); } catch {} }, [wishlist]);
-  useEffect(() => { try { localStorage.setItem('luxe_site_settings', JSON.stringify(siteSettings)); } catch {} }, [siteSettings]);
-
-  // ==============================
-  // User State Helper
-  // ==============================
-  const updateUserState = (userData) => {
-    if (!userData) return;
-    setCurrentUser(userData);
-    localStorage.setItem('luxe_user', JSON.stringify(userData));
-  };
-
-  // ==============================
-  // Backend Health
-  // ==============================
-  const checkBackendHealth = async () => {
+  const checkBackendHealth = useCallback(async () => {
     try {
-      const response = await healthAPI.checkHealth();
-      const isOnline = response?.status?.toLowerCase?.() === 'ok' || response?.success === true;
-      if (isOnline) { setIsBackendConnected(true); return true; }
-      setIsBackendConnected(false);
+      const res = await cache.current.get('health', () => healthAPI.checkHealth(), 15_000);
+      const ok = res?.status?.toLowerCase() === 'ok' || res?.success === true;
+      if (isMounted.current) setIsBackendConnected(ok);
+      return ok;
+    } catch {
+      if (isMounted.current) setIsBackendConnected(false);
       return false;
-    } catch { setIsBackendConnected(false); return false; }
-  };
+    }
+  }, []);
 
-  useEffect(() => { checkBackendHealth(); }, []);
-  useEffect(() => { if (isAuthenticated && currentUser) setIsBackendConnected(true); }, [isAuthenticated, currentUser]);
-
-  // ==============================
-  // Products Refresh
-  // ==============================
-  const refreshProducts = async () => {
+  const refreshProducts = useCallback(async () => {
     try {
-      if (!isBackendConnected) return products;
-      const prodData = await shopAPI.getProducts();
-      const rawProducts = extractProductsFromResponse(prodData);
-      if (rawProducts.length > 0) { const mapped = rawProducts.map((p) => mapBackendProduct(p)); setProducts(mapped); return mapped; }
-      return products;
-    } catch { return products; }
-  };
-
-  const refreshCategories = async () => {
-    try {
-      if (!isBackendConnected) return categories;
-      const catData = await shopAPI.getCategories();
-      const raw = extractCategoriesFromResponse(catData);
-      if (raw.length > 0) {
-        const mapped = raw.map((c) => ({ id: c._id || c.id, _id: c._id || c.id, name: c.name, slug: c.slug, description: c.description || '', image: c.image || '', isActive: c.isActive !== undefined ? c.isActive : true }));
-        setCategories(mapped); return mapped;
+      const res  = await cache.current.get('products', () => shopAPI.getProducts(), 60_000);
+      const rows = extractArray(res, 'products', 'data', 'data.products', 'data.data.products');
+      if (rows.length && isMounted.current) {
+        const mapped = rows.map((p) => mapBackendProduct(p));
+        setProducts(mapped);
+        return mapped;
       }
-      return categories;
-    } catch { return categories; }
-  };
+    } catch (e) {
+      console.warn('[refreshProducts]', e?.message);
+    }
+    return [];
+  }, []);
 
-  const syncBackendData = async () => {
+  const refreshCategories = useCallback(async () => {
     try {
-      if (!isBackendConnected) return;
-      setIsLoading(true);
-      try { const home = await homeAPI.getHomeData(); setHomeData(home); } catch {}
-      await refreshProducts(); await refreshCategories();
-      if (isAuthenticated) await fetchUserData();
-    } catch {} finally { setIsLoading(false); }
-  };
+      const res  = await cache.current.get('categories', () => shopAPI.getCategories(), 60_000);
+      const rows = extractArray(res, 'categories', 'data', 'data.categories', 'data.data.categories');
+      if (rows.length && isMounted.current) {
+        const mapped = rows.map((c) => ({
+          id: c._id || c.id, _id: c._id || c.id,
+          name: c.name, slug: c.slug,
+          description: c.description || '',
+          image: c.image || '',
+          isActive: c.isActive ?? true,
+          productCount: c.productCount || 0,
+        }));
+        setCategories(mapped);
+        return mapped;
+      }
+    } catch (e) {
+      console.warn('[refreshCategories]', e?.message);
+    }
+    return [];
+  }, []);
 
-  useEffect(() => { if (isBackendConnected) syncBackendData(); }, [isBackendConnected, isAuthenticated]);
+  const refreshReels = useCallback(async (limit = 10) => {
+    try {
+      const res  = await cache.current.get('reels-public', () => reelsAPI.getPublic(limit), 30_000);
+      const rows = res?.data?.reels || res?.reels || [];
+      if (rows.length && isMounted.current) { setReels(rows); return rows; }
+    } catch (e) {
+      console.warn('[refreshReels]', e?.message);
+    }
+    return [];
+  }, []);
 
-  // ==============================
-  // Profile Management
-  // ==============================
-  const getUserProfile = async () => {
+  const getUserProfile = useCallback(async () => {
+    try {
+      const res  = await cache.current.get('profile', () => profileAPI.getProfile(), 20_000);
+      const user = res?.data?.user || res?.data || res?.user || null;
+      if (res?.success && user && isMounted.current) { updateUserState(user); return user; }
+    } catch (e) {
+      console.warn('[getUserProfile]', e?.message);
+    }
+    return null;
+  }, [updateUserState]);
+
+  const isSameProduct = (a, b) =>
+    a.id === b.id || a._id === b._id || a.id === b._id || a._id === b.id;
+
+  const fetchCartFromBackend = useCallback(async () => {
+    try {
+      if (!isBackendConnected || !isAuthenticated) return;
+      
+      const response = await cartAPI.getCart();
+      const items = response?.cart?.items || response?.data?.items || response?.items || [];
+      
+      if (Array.isArray(items) && isMounted.current) {
+        const normalizedItems = items.map((item) => {
+          const product = item.product || item;
+          return normalizeCartProduct({
+            ...product,
+            quantity: item.quantity || 1,
+            cartItemId: item._id || item.id
+          });
+        }).filter(Boolean);
+        
+        setCart(normalizedItems);
+        cache.current.invalidate('user-cart');
+      }
+    } catch (error) {
+      console.warn('[fetchCartFromBackend]', error?.message);
+    }
+  }, [isBackendConnected, isAuthenticated]);
+
+  const fetchUserData = useCallback(async () => {
+    if (userFetchLock.current) return;
+    if (!localStorage.getItem(STORAGE_KEYS.token)) return;
+
+    userFetchLock.current = true;
+
+    try {
+      await getUserProfile();
+      if (!isMounted.current) return;
+
+      await Promise.allSettled([
+        fetchCartFromBackend(),
+        (async () => {
+          const d     = await wishlistAPI.getWishlist();
+          const items = d?.wishlist?.items || d?.data?.items || [];
+          if (Array.isArray(items) && items.length && isMounted.current)
+            setWishlist(items.map((i) => ({ id: i._id || i.id, ...i })));
+        })(),
+        (async () => {
+          const d    = await orderAPI.getMyOrders();
+          const list = d?.orders || d?.data || [];
+          if (Array.isArray(list) && list.length && isMounted.current) setOrders(list);
+        })(),
+        (async () => {
+          const d    = await reviewAPI.getMyReviews();
+          const list = d?.reviews || d?.data || [];
+          if (Array.isArray(list) && list.length && isMounted.current) setReviews(list);
+        })(),
+      ]);
+    } catch (e) {
+      console.warn('[fetchUserData]', e?.message);
+    } finally {
+      setTimeout(() => { userFetchLock.current = false; }, 10_000);
+    }
+  }, [getUserProfile, fetchCartFromBackend]);
+
+  const syncBackendData = useCallback(async (withUser = false) => {
+    if (syncLock.current) return;
+    syncLock.current = true;
+    if (isMounted.current) setIsLoading(true);
+
+    try {
+      const home = await cache.current.get('home', () => homeAPI.getHomeData(), 60_000).catch(() => null);
+      if (home && isMounted.current) setHomeData(home);
+
+      await Promise.allSettled([refreshProducts(), refreshCategories(), refreshReels()]);
+
+      if (withUser && localStorage.getItem(STORAGE_KEYS.token) && isMounted.current) {
+        await fetchUserData();
+      }
+    } catch (e) {
+      console.warn('[syncBackendData]', e?.message);
+    } finally {
+      if (isMounted.current) setIsLoading(false);
+      syncLock.current = false;
+      setTimeout(() => { didSync.current = false; }, 120_000);
+    }
+  }, [refreshProducts, refreshCategories, refreshReels, fetchUserData]);
+
+  useEffect(() => {
+    if (didSync.current) return;
+    didSync.current = true;
+
+    let cancelled = false;
+
+    (async () => {
+      const online = await checkBackendHealth();
+      if (cancelled || !online) return;
+      await syncBackendData(!!localStorage.getItem(STORAGE_KEYS.token));
+    })();
+
+    return () => { cancelled = true; };
+  }, []);
+
+  const userId = useMemo(
+    () => currentUser?._id || currentUser?.id || null,
+    [currentUser?._id, currentUser?.id],
+  );
+
+  useEffect(() => {
+    const key = `${isAuthenticated}|${userId ?? ''}`;
+    if (prevAuthKey.current === key) return;
+    prevAuthKey.current = key;
+
+    if (isAuthenticated && userId && !didFetchUser.current) {
+      didFetchUser.current = true;
+      setIsBackendConnected(true);
+      cache.current.clear();
+      fetchUserData();
+    }
+
+    if (!isAuthenticated) {
+      didFetchUser.current = false;
+      userFetchLock.current = false;
+    }
+  }, [isAuthenticated, userId, fetchUserData]);
+
+  // ─── LOGIN DISPATCHES ───
+  const handleLoginSuccess = useCallback((result) => {
+    if (!result?.success || !result?.data) return false;
+    
+    const { user, token } = result.data;
+    if (user && token) {
+      updateUserState(user);
+      storage.setRaw(STORAGE_KEYS.token, token);
+      setIsAuthenticated(true);
+      setIsBackendConnected(true);
+      didFetchUser.current = false;
+      userFetchLock.current = false;
+      cache.current.clear();
+      toast.success(`Welcome back, ${user.name || 'User'}!`);
+      return true;
+    }
+    return false;
+  }, [updateUserState]);
+
+  const loginWithEmail = useCallback(async (email, password) => {
+    setIsLoading(true);
+    try {
+      const result = await authAPI.loginWithEmail(email, password);
+      if (handleLoginSuccess(result)) {
+        return { success: true, data: result.data };
+      }
+      throw new Error(result?.message || 'Email login failed');
+    } catch (error) {
+      const message = getErrorMessage(error, 'Email login failed');
+      toast.error(message);
+      return { success: false, message };
+    } finally {
+      setIsLoading(false);
+    }
+  }, [handleLoginSuccess]);
+
+  const loginWithGoogle = useCallback(async (accessToken) => {
+    setIsLoading(true);
+    try {
+      const result = await authAPI.loginWithGoogle(accessToken);
+      if (handleLoginSuccess(result)) {
+        return { success: true, data: result.data };
+      }
+      throw new Error(result?.message || 'Google login failed');
+    } catch (error) {
+      const message = getErrorMessage(error, 'Google login failed');
+      toast.error(message);
+      return { success: false, message };
+    } finally {
+      setIsLoading(false);
+    }
+  }, [handleLoginSuccess]);
+
+  const loginWithFacebook = useCallback(async (accessToken) => {
+    setIsLoading(true);
+    try {
+      const result = await authAPI.loginWithFacebook(accessToken);
+      if (handleLoginSuccess(result)) {
+        return { success: true, data: result.data };
+      }
+      throw new Error(result?.message || 'Facebook login failed');
+    } catch (error) {
+      const message = getErrorMessage(error, 'Facebook login failed');
+      toast.error(message);
+      return { success: false, message };
+    } finally {
+      setIsLoading(false);
+    }
+  }, [handleLoginSuccess]);
+
+  const loginWithPhone = useCallback(async (phone, otp) => {
+    setIsLoading(true);
+    try {
+      const result = await authAPI.loginWithPhone(phone, otp);
+      if (handleLoginSuccess(result)) {
+        return { success: true, data: result.data };
+      }
+      throw new Error(result?.message || 'Phone login failed');
+    } catch (error) {
+      const message = getErrorMessage(error, 'Phone login failed');
+      toast.error(message);
+      return { success: false, message };
+    } finally {
+      setIsLoading(false);
+    }
+  }, [handleLoginSuccess]);
+
+  const loginWithWhatsApp = useCallback(async (phone, otp) => {
+    setIsLoading(true);
+    try {
+      const result = await authAPI.loginWithWhatsApp(phone, otp);
+      if (handleLoginSuccess(result)) {
+        return { success: true, data: result.data };
+      }
+      throw new Error(result?.message || 'WhatsApp login failed');
+    } catch (error) {
+      const message = getErrorMessage(error, 'WhatsApp login failed');
+      toast.error(message);
+      return { success: false, message };
+    } finally {
+      setIsLoading(false);
+    }
+  }, [handleLoginSuccess]);
+
+  const sendPhoneOTP = useCallback(async (phone) => {
+    try {
+      const result = await authAPI.sendPhoneOTP(phone);
+      if (result?.success) {
+        toast.success('OTP sent to your phone!');
+        return { 
+          success: true, 
+          message: 'OTP sent successfully',
+          otp: result.otp || result.data?.otp
+        };
+      }
+      throw new Error(result?.message || 'Failed to send OTP');
+    } catch (error) {
+      const message = getErrorMessage(error, 'Failed to send OTP');
+      toast.error(message);
+      return { success: false, message };
+    }
+  }, []);
+
+  const sendWhatsAppOTP = useCallback(async (phone) => {
+    try {
+      const result = await authAPI.sendWhatsAppOTP(phone);
+      if (result?.success) {
+        toast.success('OTP sent to your WhatsApp!');
+        return { 
+          success: true, 
+          message: 'WhatsApp OTP sent successfully',
+          otp: result.otp || result.data?.otp
+        };
+      }
+      throw new Error(result?.message || 'Failed to send WhatsApp OTP');
+    } catch (error) {
+      const message = getErrorMessage(error, 'Failed to send WhatsApp OTP');
+      toast.error(message);
+      return { success: false, message };
+    }
+  }, []);
+
+  // PROFILE
+  const updateUserProfile = useCallback(async (profileData) => {
+    setIsLoading(true);
     try {
       if (isBackendConnected && isAuthenticated) {
-        const response = await profileAPI.getProfile();
-        const userData = response?.data?.user || response?.data || response?.user || null;
-        if (response?.success && userData) { updateUserState(userData); return userData; }
+        const res  = await profileAPI.updateProfile(profileData);
+        const user = res?.data?.user || res?.data || res?.user || null;
+        if (res?.success && user) {
+          updateUserState(user);
+          cache.current.invalidate('profile');
+          toast.success('Profile updated!');
+          return user;
+        }
       }
-      return currentUser;
-    } catch { return currentUser; }
-  };
+      const updated = { ...currentUser, ...profileData };
+      updateUserState(updated);
+      toast.success('Profile updated!');
+      return updated;
+    } catch (e) {
+      toast.error(getErrorMessage(e));
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isBackendConnected, isAuthenticated, currentUser, updateUserState]);
 
-  const updateUserProfile = async (profileData) => {
+  const changeUserPassword = useCallback(async (passwordData) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
       if (isBackendConnected && isAuthenticated) {
-        const response = await profileAPI.updateProfile(profileData);
-        const userData = response?.data?.user || response?.data || response?.user || null;
-        if (response?.success && userData) { updateUserState(userData); toast.success('Profile updated!'); return userData; }
+        const r = await authAPI.changePassword(passwordData);
+        if (r?.success) { toast.success('Password changed!'); return r; }
       }
-      const updatedUser = { ...currentUser, ...profileData };
-      updateUserState(updatedUser); toast.success('Profile updated!'); return updatedUser;
-    } catch (error) { toast.error(getErrorMessage(error)); return null; } finally { setIsLoading(false); }
-  };
+      toast.success('Password changed!');
+      return { success: true };
+    } catch (e) {
+      toast.error(getErrorMessage(e));
+      return { success: false };
+    } finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated]);
 
-  const changeUserPassword = async (passwordData) => {
+  const uploadUserAvatar = useCallback(async (file) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      if (isBackendConnected && isAuthenticated) { const r = await authAPI.changePassword(passwordData); if (r?.success) { toast.success('Password changed!'); return r; } }
-      toast.success('Password changed!'); return { success: true };
-    } catch (error) { toast.error(getErrorMessage(error)); return { success: false }; } finally { setIsLoading(false); }
-  };
-
-  const uploadUserAvatar = async (file) => {
-    try {
-      setIsLoading(true);
       if (isBackendConnected && isAuthenticated) {
-        const response = await profileAPI.uploadAvatar(file);
-        if (response?.success && response?.data) { updateUserState({ ...currentUser, avatar: response.data.avatar }); toast.success('Avatar updated!'); return response; }
+        const res = await profileAPI.uploadAvatar(file);
+        if (res?.success && res?.data) {
+          updateUserState({ ...currentUser, avatar: res.data.avatar });
+          cache.current.invalidate('profile');
+          toast.success('Avatar updated!');
+          return res;
+        }
       }
-      const avatarUrl = URL.createObjectURL(file);
-      updateUserState({ ...currentUser, avatar: avatarUrl }); toast.success('Avatar updated!');
-      return { success: true, data: { avatar: avatarUrl } };
-    } catch (error) { toast.error(getErrorMessage(error)); return { success: false }; } finally { setIsLoading(false); }
-  };
+      const url = URL.createObjectURL(file);
+      updateUserState({ ...currentUser, avatar: url });
+      toast.success('Avatar updated!');
+      return { success: true, data: { avatar: url } };
+    } catch (e) {
+      toast.error(getErrorMessage(e));
+      return { success: false };
+    } finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated, currentUser, updateUserState]);
 
-  // ==============================
-  // Address Management
-  // ==============================
-  const addAddress = async (addressData) => {
+  // ADDRESS
+  const _invalidateProfile = () => cache.current.invalidate('profile');
+
+  const addAddress = useCallback(async (addressData) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      if (isBackendConnected && isAuthenticated) { const r = await profileAPI.addAddress(addressData); if (r?.success && r?.data) { updateUserState(r.data); return r; } }
-      const newAddr = { _id: Date.now().toString(), ...addressData, createdAt: new Date() };
-      let addrs = [...(currentUser?.address || []), newAddr];
+      if (isBackendConnected && isAuthenticated) {
+        const r = await profileAPI.addAddress(addressData);
+        if (r?.success && r?.data) { updateUserState(r.data); _invalidateProfile(); return r; }
+      }
+      const newAddr = { _id: String(Date.now()), ...addressData, createdAt: new Date() };
+      let addrs    = [...(currentUser?.address || []), newAddr];
       if (addressData.isDefault) addrs = addrs.map((a, i) => ({ ...a, isDefault: i === addrs.length - 1 }));
-      updateUserState({ ...currentUser, address: addrs });
-      return { success: true, data: { ...currentUser, address: addrs } };
-    } catch (error) { toast.error(getErrorMessage(error)); return { success: false }; } finally { setIsLoading(false); }
-  };
+      const next = { ...currentUser, address: addrs };
+      updateUserState(next);
+      return { success: true, data: next };
+    } catch (e) { toast.error(getErrorMessage(e)); return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated, currentUser, updateUserState]);
 
-  const updateAddress = async (addressId, addressData) => {
+  const updateAddress = useCallback(async (addressId, addressData) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      if (isBackendConnected && isAuthenticated) { const r = await profileAPI.updateAddress(addressId, addressData); if (r?.success && r?.data) { updateUserState(r.data); return r; } }
-      let addrs = currentUser?.address?.map((a) => a._id === addressId ? { ...a, ...addressData } : a) || [];
-      if (addressData.isDefault) addrs = addrs.map((a) => ({ ...a, isDefault: a._id === addressId }));
-      updateUserState({ ...currentUser, address: addrs });
-      return { success: true, data: { ...currentUser, address: addrs } };
-    } catch (error) { toast.error(getErrorMessage(error)); return { success: false }; } finally { setIsLoading(false); }
-  };
-
-  const deleteAddress = async (addressId) => {
-    try {
-      setIsLoading(true);
-      if (isBackendConnected && isAuthenticated) { const r = await profileAPI.deleteAddress(addressId); if (r?.success && r?.data) { updateUserState(r.data); return r; } }
-      const toDelete = currentUser?.address?.find((a) => a._id === addressId);
-      let addrs = currentUser?.address?.filter((a) => a._id !== addressId) || [];
-      if (toDelete?.isDefault && addrs.length > 0) addrs[0] = { ...addrs[0], isDefault: true };
-      updateUserState({ ...currentUser, address: addrs });
-      return { success: true, data: { ...currentUser, address: addrs } };
-    } catch (error) { toast.error(getErrorMessage(error)); return { success: false }; } finally { setIsLoading(false); }
-  };
-
-  const setDefaultAddress = async (addressId) => {
-    try {
-      setIsLoading(true);
-      if (isBackendConnected && isAuthenticated) { const r = await profileAPI.setDefaultAddress(addressId); if (r?.success && r?.data) { updateUserState(r.data); return r; } }
-      const addrs = currentUser?.address?.map((a) => ({ ...a, isDefault: a._id === addressId })) || [];
-      updateUserState({ ...currentUser, address: addrs });
-      return { success: true, data: { ...currentUser, address: addrs } };
-    } catch (error) { toast.error(getErrorMessage(error)); return { success: false }; } finally { setIsLoading(false); }
-  };
-
-  // ==============================
-  // Admin Product Actions
-  // ==============================
-  const addProduct = async (productData) => {
-    try {
-      setIsLoading(true);
-      if (!isBackendConnected) {
-        const localProduct = { id: `PROD-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`, ...productData, rating: 5.0, reviewsCount: 0, isActive: true, image: productData.image || 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=600' };
-        setProducts((prev) => [localProduct, ...prev]);
-        toast.success('Product added!');
-        return { success: true, data: localProduct, offline: true };
+      if (isBackendConnected && isAuthenticated) {
+        const r = await profileAPI.updateAddress(addressId, addressData);
+        if (r?.success && r?.data) { updateUserState(r.data); _invalidateProfile(); return r; }
       }
-      const matched = categories.find((c) => c.name?.toLowerCase?.() === productData.category?.toLowerCase?.());
-      const catId = matched?._id || matched?.id || null;
-      const isValid = (id) => /^[0-9a-fA-F]{24}$/.test(String(id || ''));
-      const finalCat = isValid(catId) ? catId : productData.category || 'General';
-      const tags = Array.isArray(productData.tags) ? productData.tags : typeof productData.tags === 'string' ? productData.tags.split(',').map(t => t.trim()).filter(Boolean) : ['new'];
-      const payload = { name: productData.name?.trim() || 'New Product', description: productData.description?.trim() || 'Premium item.', price: Number(productData.price) || 0, salePrice: productData.oldPrice ? Number(productData.oldPrice) : null, category: finalCat, inventory: { quantity: Number(productData.stock) || 10, lowStockThreshold: 5 }, images: productData.image ? [{ url: productData.image, alt: productData.name, isPrimary: true }] : [], tags, isFeatured: Boolean(productData.isFeatured) };
-      const response = await adminAPI.products.create(payload);
-      if (!response?.success) throw response;
-      const created = response?.data?.product || response?.data || response;
-      const newProd = mapBackendProduct(created, { ...productData, category: productData.category });
-      setProducts((prev) => [newProd, ...prev]);
+      let addrs = (currentUser?.address || []).map((a) => a._id === addressId ? { ...a, ...addressData } : a);
+      if (addressData.isDefault) addrs = addrs.map((a) => ({ ...a, isDefault: a._id === addressId }));
+      const next = { ...currentUser, address: addrs };
+      updateUserState(next);
+      return { success: true, data: next };
+    } catch (e) { toast.error(getErrorMessage(e)); return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated, currentUser, updateUserState]);
+
+  const deleteAddress = useCallback(async (addressId) => {
+    setIsLoading(true);
+    try {
+      if (isBackendConnected && isAuthenticated) {
+        const r = await profileAPI.deleteAddress(addressId);
+        if (r?.success && r?.data) { updateUserState(r.data); _invalidateProfile(); return r; }
+      }
+      const removing = (currentUser?.address || []).find((a) => a._id === addressId);
+      let addrs      = (currentUser?.address || []).filter((a) => a._id !== addressId);
+      if (removing?.isDefault && addrs.length) addrs[0] = { ...addrs[0], isDefault: true };
+      const next = { ...currentUser, address: addrs };
+      updateUserState(next);
+      return { success: true, data: next };
+    } catch (e) { toast.error(getErrorMessage(e)); return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated, currentUser, updateUserState]);
+
+  const setDefaultAddress = useCallback(async (addressId) => {
+    setIsLoading(true);
+    try {
+      if (isBackendConnected && isAuthenticated) {
+        const r = await profileAPI.setDefaultAddress(addressId);
+        if (r?.success && r?.data) { updateUserState(r.data); _invalidateProfile(); return r; }
+      }
+      const addrs = (currentUser?.address || []).map((a) => ({ ...a, isDefault: a._id === addressId }));
+      const next  = { ...currentUser, address: addrs };
+      updateUserState(next);
+      return { success: true, data: next };
+    } catch (e) { toast.error(getErrorMessage(e)); return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated, currentUser, updateUserState]);
+
+  // CART
+  const addToCart = useCallback(async (productData, quantity = 1, variant = null) => {
+    try {
+      let productId;
+      if (typeof productData === 'string') {
+        productId = productData;
+      } else if (typeof productData === 'object' && productData) {
+        productId = productData._id || productData.id || productData.productId;
+      } else {
+        throw new Error('Invalid product data provided');
+      }
+
+      if (!productId) {
+        throw new Error('Product ID is required');
+      }
+
+      const product = products.find(p => p._id === productId || p.id === productId);
+      if (!product) {
+        throw new Error('Product not found');
+      }
+
+      const optimisticCartItem = normalizeCartProduct({
+        ...product,
+        quantity: quantity,
+        cartItemId: `temp-${Date.now()}`
+      });
+
+      let cartSnapshot;
+      setCart(prevCart => {
+        cartSnapshot = prevCart;
+        
+        const existingIndex = prevCart.findIndex(item => 
+          isSameProduct(item, optimisticCartItem)
+        );
+
+        if (existingIndex > -1) {
+          return prevCart.map((item, index) => 
+            index === existingIndex 
+              ? { ...item, quantity: (Number(item.quantity) || 0) + quantity }
+              : item
+          );
+        } else {
+          return [...prevCart, optimisticCartItem];
+        }
+      });
+
+      if (isBackendConnected && isAuthenticated) {
+        try {
+          const response = await cartAPI.addToCart({
+            productId: productId,
+            quantity: quantity,
+            variant: variant
+          });
+
+          if (response?.success) {
+            await fetchCartFromBackend();
+            cache.current.invalidate('user-cart');
+          } else {
+            throw new Error(response?.message || 'Failed to add item to cart');
+          }
+        } catch (apiError) {
+          if (cartSnapshot) setCart(cartSnapshot);
+          throw apiError;
+        }
+      }
+
+      toast.success('Item added to cart!');
+      return { success: true };
+
+    } catch (error) {
+      console.error('❌ Error adding to cart:', error);
+      const errorMessage = getErrorMessage(error, 'Failed to add item to cart');
+      toast.error(errorMessage);
+      return { success: false, message: errorMessage };
+    }
+  }, [isBackendConnected, isAuthenticated, products, fetchCartFromBackend]);
+
+  const buyNowProduct = useCallback(async (product, qty = 1) => addToCart(product, qty), [addToCart]);
+
+  const removeFromCart = useCallback(async (productId) => {
+    let cartSnapshot;
+    try {
+      setCart(prevCart => {
+        cartSnapshot = prevCart;
+        return prevCart.filter(item => {
+          const itemId = item._id || item.id || item.cartItemId;
+          const compareId = typeof productId === 'object' ? (productId._id || productId.id) : productId;
+          return itemId !== compareId && itemId !== productId;
+        });
+      });
+
+      if (isBackendConnected && isAuthenticated) {
+        try {
+          const cartItem = cartSnapshot?.find(item => {
+            const itemId = item._id || item.id || item.cartItemId;
+            const compareId = typeof productId === 'object' ? (productId._id || productId.id) : productId;
+            return itemId === compareId || itemId === productId;
+          });
+
+          if (cartItem?.cartItemId && !cartItem.cartItemId.startsWith('temp-')) {
+            await cartAPI.removeItem(cartItem.cartItemId);
+          }
+          
+          cache.current.invalidate('user-cart');
+        } catch (apiError) {
+          if (cartSnapshot) setCart(cartSnapshot);
+          throw apiError;
+        }
+      }
+
+      toast.success('Item removed from cart');
+      return { success: true };
+    } catch (error) {
+      if (cartSnapshot) setCart(cartSnapshot);
+      const errorMessage = getErrorMessage(error, 'Failed to remove item from cart');
+      toast.error(errorMessage);
+      return { success: false, message: errorMessage };
+    }
+  }, [isBackendConnected, isAuthenticated]);
+
+  const updateCartQty = useCallback(async (productId, newQuantity) => {
+    if (newQuantity <= 0) {
+      return removeFromCart(productId);
+    }
+
+    let cartSnapshot;
+    try {
+      setCart(prevCart => {
+        cartSnapshot = prevCart;
+        return prevCart.map(item => {
+          const itemId = item._id || item.id || item.cartItemId;
+          const compareId = typeof productId === 'object' ? (productId._id || productId.id) : productId;
+          
+          if (itemId === compareId || itemId === productId) {
+            return { ...item, quantity: newQuantity };
+          }
+          return item;
+        });
+      });
+
+      if (isBackendConnected && isAuthenticated) {
+        try {
+          const cartItem = cartSnapshot?.find(item => {
+            const itemId = item._id || item.id || item.cartItemId;
+            const compareId = typeof productId === 'object' ? (productId._id || productId.id) : productId;
+            return itemId === compareId || itemId === productId;
+          });
+
+          if (cartItem?.cartItemId && !cartItem.cartItemId.startsWith('temp-')) {
+            await cartAPI.updateQuantity(cartItem.cartItemId, newQuantity);
+          }
+          
+          cache.current.invalidate('user-cart');
+        } catch (apiError) {
+          if (cartSnapshot) setCart(cartSnapshot);
+          throw apiError;
+        }
+      }
+
+      return { success: true };
+    } catch (error) {
+      if (cartSnapshot) setCart(cartSnapshot);
+      const errorMessage = getErrorMessage(error, 'Failed to update quantity');
+      toast.error(errorMessage);
+      return { success: false, message: errorMessage };
+    }
+  }, [isBackendConnected, isAuthenticated, removeFromCart]);
+
+  const clearCart = useCallback(async () => {
+    let cartSnapshot;
+    try {
+      setCart(prevCart => {
+        cartSnapshot = prevCart;
+        return [];
+      });
+      setAppliedCoupon(null);
+
+      if (isBackendConnected && isAuthenticated) {
+        try {
+          await cartAPI.clearCart();
+          cache.current.invalidate('user-cart');
+        } catch (apiError) {
+          if (cartSnapshot) setCart(cartSnapshot);
+          throw apiError;
+        }
+      }
+
+      toast.success('Cart cleared');
+      return { success: true };
+    } catch (error) {
+      if (cartSnapshot) setCart(cartSnapshot);
+      const errorMessage = getErrorMessage(error, 'Failed to clear cart');
+      toast.error(errorMessage);
+      return { success: false, message: errorMessage };
+    }
+  }, [isBackendConnected, isAuthenticated]);
+
+  // ADMIN - PRODUCTS
+  const addProduct = useCallback(async (productData) => {
+    setIsLoading(true);
+    try {
+      if (!isBackendConnected) {
+        const local = {
+          id: `PROD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          ...productData, rating: 5.0, reviewsCount: 0, isActive: true,
+          image: productData.image || 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=600',
+        };
+        setProducts((p) => [local, ...p]);
+        toast.success('Product added (offline)!');
+        return { success: true, data: local, offline: true };
+      }
+
+      const matched  = categories.find((c) => c.name?.toLowerCase() === productData.category?.toLowerCase());
+      const catId    = matched?._id || matched?.id || null;
+      const isMongoId = (id) => /^[0-9a-fA-F]{24}$/.test(String(id || ''));
+      const finalCat = isMongoId(catId) ? catId : productData.category || 'General';
+
+      const tags = Array.isArray(productData.tags)
+        ? productData.tags
+        : typeof productData.tags === 'string'
+          ? productData.tags.split(',').map((t) => t.trim()).filter(Boolean)
+          : ['new'];
+
+      const payload = {
+        name:        productData.name?.trim()        || 'New Product',
+        description: productData.description?.trim() || 'Premium item.',
+        price:       Number(productData.price)       || 0,
+        salePrice:   productData.oldPrice ? Number(productData.oldPrice) : null,
+        category:    finalCat,
+        inventory:   { quantity: Number(productData.stock) || 10, lowStockThreshold: 5 },
+        images:      productData.image ? [{ url: productData.image, alt: productData.name, isPrimary: true }] : [],
+        tags,
+        isFeatured:  Boolean(productData.isFeatured),
+      };
+
+      const res = await adminAPI.products.create(payload);
+      if (!res?.success) throw res;
+
+      const raw    = res?.data?.product || res?.data || res;
+      const newProd = mapBackendProduct(raw, { ...productData, category: productData.category });
+      setProducts((p) => [newProd, ...p]);
+      cache.current.invalidate('products');
       toast.success('Product added!');
       return { success: true, data: newProd };
-    } catch (error) { const msg = getErrorMessage(error, 'Failed to add product'); toast.error(msg); return { success: false, message: msg }; } finally { setIsLoading(false); }
-  };
+    } catch (e) {
+      const msg = getErrorMessage(e, 'Failed to add product');
+      toast.error(msg);
+      return { success: false, message: msg };
+    } finally { setIsLoading(false); }
+  }, [isBackendConnected, categories]);
 
-  const deleteProduct = async (productId) => {
+  const deleteProduct = useCallback(async (productId) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
       if (isBackendConnected) { try { await adminAPI.products.delete(productId); } catch {} }
-      setProducts((prev) => prev.filter((p) => p.id !== productId && p._id !== productId));
+      setProducts((p) => p.filter((x) => x.id !== productId && x._id !== productId));
+      cache.current.invalidate('products');
       toast.success('Product deleted');
       return { success: true };
-    } catch (error) { toast.error(getErrorMessage(error)); return { success: false }; } finally { setIsLoading(false); }
-  };
+    } catch (e) { toast.error(getErrorMessage(e)); return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected]);
 
-  const updateProduct = async (productId, updateData) => {
+  const updateProduct = useCallback(async (productId, data) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      setProducts((prev) => prev.map((p) => (p.id === productId || p._id === productId) ? { ...p, ...updateData } : p));
-      if (isBackendConnected) { try { await adminAPI.products.update(productId, updateData); } catch {} }
+      setProducts((p) => p.map((x) => x.id === productId || x._id === productId ? { ...x, ...data } : x));
+      if (isBackendConnected) {
+        try { await adminAPI.products.update(productId, data); cache.current.invalidate('products'); }
+        catch {}
+      }
       return { success: true };
-    } catch (error) { return { success: false }; } finally { setIsLoading(false); }
-  };
+    } catch { return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected]);
 
-  // ==============================
-  // Admin Order/User Actions
-  // ==============================
-  const updateOrderStatus = async (orderId, status) => {
+  // ─── ADMIN - CATEGORIES (PROPER DATABASE SYNC) ───
+  const addCategory = useCallback(async (catData) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
+      if (!isBackendConnected) {
+        const local = {
+          id: catData.slug.toLowerCase(),
+          _id: catData.slug.toLowerCase(),
+          name: catData.name,
+          slug: catData.slug,
+          description: catData.description || '',
+          image: catData.image || '',
+          productCount: 0,
+          isActive: true,
+        };
+        setCategories((c) => [...c, local]);
+        toast.success('Category created (offline)!');
+        return { success: true, data: local };
+      }
+
+      const res = await adminAPI.categories.create({
+        name: catData.name,
+        slug: catData.slug,
+        description: catData.description,
+        image: catData.image
+      });
+
+      if (res?.success) {
+        const raw = res?.data?.category || res?.data || res;
+        const newCat = {
+          id: raw._id || raw.id,
+          _id: raw._id || raw.id,
+          name: raw.name,
+          slug: raw.slug,
+          description: raw.description || '',
+          image: raw.image || '',
+          isActive: raw.isActive ?? true,
+          productCount: raw.productCount || 0,
+        };
+        setCategories((c) => [...c, newCat]);
+        cache.current.invalidate('categories');
+        toast.success('Category created!');
+        return { success: true, data: newCat };
+      }
+      throw new Error(res?.message || 'Failed to create category on backend');
+    } catch (e) {
+      const msg = getErrorMessage(e, 'Failed to create category');
+      toast.error(msg);
+      return { success: false, message: msg };
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isBackendConnected]);
+
+  const deleteCategory = useCallback(async (catId) => {
+    setIsLoading(true);
+    try {
+      if (isBackendConnected) {
+        await adminAPI.categories.delete(catId);
+      }
+      setCategories((c) => c.filter((x) => x.id !== catId && x._id !== catId));
+      cache.current.invalidate('categories');
+      toast.success('Category deleted');
+      return { success: true };
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Failed to delete category'));
+      return { success: false };
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isBackendConnected]);
+
+  // REELS
+  const _invalidateReels = () => cache.current.invalidate('reels-public', 'reels-admin');
+
+  const getPublicReels = useCallback(async (limit = 10) => {
+    setIsLoading(true);
+    try {
+      const res  = await cache.current.get('reels-public', () => reelsAPI.getPublic(limit), 30_000);
+      const rows = res?.data?.reels || res?.reels || [];
+      if (rows.length && isMounted.current) setReels(rows);
+      return { success: true, data: rows };
+    } catch (e) { toast.error(getErrorMessage(e, 'Failed to fetch reels')); return { success: false, data: [] }; }
+    finally { setIsLoading(false); }
+  }, []);
+
+  const getAdminReels = useCallback(async () => {
+    if (!isBackendConnected || !isAuthenticated) return { success: true, data: reels };
+    setIsLoading(true);
+    try {
+      const res  = await cache.current.get('reels-admin', () => reelsAPI.getAdmin(), 30_000);
+      const rows = res?.data?.reels || res?.reels || [];
+      if (rows.length && isMounted.current) setReels(rows);
+      return { success: true, data: rows };
+    } catch (e) { toast.error(getErrorMessage(e, 'Failed to fetch reels')); return { success: false, data: [] }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated, reels]);
+
+  const addReel = useCallback(async (reelData) => {
+    setIsLoading(true);
+    try {
+      if (!isBackendConnected || !isAuthenticated) {
+        const local = { _id: `REEL-${Date.now()}`, ...reelData, isActive: true, createdAt: new Date().toISOString() };
+        setReels((r) => [local, ...r]);
+        toast.success('Reel added locally!');
+        return { success: true, data: local, offline: true };
+      }
+      const res = await reelsAPI.create(reelData);
+      if (!res?.success) throw res;
+      const newReel = res?.data?.reel || res?.data || res;
+      if (isMounted.current) setReels((r) => [newReel, ...r]);
+      _invalidateReels();
+      toast.success('Reel added!');
+      return { success: true, data: newReel };
+    } catch (e) {
+      const msg = getErrorMessage(e, 'Failed to add reel');
+      toast.error(msg);
+      return { success: false, message: msg };
+    } finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated]);
+
+  const updateReel = useCallback(async (reelId, reelData) => {
+    setIsLoading(true);
+    try {
+      setReels((r) => r.map((x) => x._id === reelId || x.id === reelId ? { ...x, ...reelData } : x));
+      if (isBackendConnected && isAuthenticated) {
+        try { await reelsAPI.update(reelId, reelData); _invalidateReels(); toast.success('Reel updated!'); } catch {}
+      }
+      return { success: true };
+    } catch (e) { toast.error(getErrorMessage(e, 'Failed to update reel')); return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated]);
+
+  const toggleReel = useCallback(async (reelId) => {
+    setIsLoading(true);
+    try {
+      setReels((r) => r.map((x) => x._id === reelId || x.id === reelId ? { ...x, isActive: !x.isActive } : x));
+      if (isBackendConnected && isAuthenticated) {
+        try { await reelsAPI.toggle(reelId); _invalidateReels(); } catch {}
+      }
+      return { success: true };
+    } catch (e) { toast.error(getErrorMessage(e, 'Failed to toggle reel')); return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated]);
+
+  const deleteReel = useCallback(async (reelId) => {
+    setIsLoading(true);
+    try {
+      if (isBackendConnected && isAuthenticated) { try { await reelsAPI.delete(reelId); } catch {} }
+      setReels((r) => r.filter((x) => x._id !== reelId && x.id !== reelId));
+      _invalidateReels();
+      toast.success('Reel deleted!');
+      return { success: true };
+    } catch (e) { toast.error(getErrorMessage(e, 'Failed to delete reel')); return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected, isAuthenticated]);
+
+  const getReelProduct  = useCallback((reel) => {
+    if (!reel?.productId && !reel?.product) return null;
+    const pid = reel?.product?._id || reel?.product?.id || reel?.productId;
+    return products.find((p) => p._id === pid || p.id === pid) || null;
+  }, [products]);
+
+  const getProductReels = useCallback((productId) =>
+    reels.filter((r) => r.productId === productId || r.product?._id === productId || r.product?.id === productId),
+  [reels]);
+
+  // ADMIN STATUS UPDATES
+  const updateOrderStatus = useCallback(async (orderId, status) => {
+    setIsLoading(true);
+    try {
       if (isBackendConnected) { try { await adminAPI.orders.updateStatus(orderId, status); } catch {} }
-      setOrders((prev) => prev.map((o) => o.id === orderId || o._id === orderId ? { ...o, status } : o));
+      setOrders((o) => o.map((x) => x.id === orderId || x._id === orderId ? { ...x, status } : x));
+      cache.current.invalidate('user-orders');
       toast.success('Order status updated');
       return { success: true };
-    } catch { return { success: false }; } finally { setIsLoading(false); }
-  };
+    } catch { return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected]);
 
-  const assignTrackingId = async (orderId, trackingId) => {
+  const assignTrackingId = useCallback(async (orderId, trackingId) => {
     try {
-      setOrders((prev) => prev.map((o) => o.id === orderId || o._id === orderId ? { ...o, trackingId } : o));
+      setOrders((o) => o.map((x) => x.id === orderId || x._id === orderId ? { ...x, trackingId } : x));
       if (isBackendConnected) { try { await adminAPI.orders.sendUpdate(orderId, { trackingId }); } catch {} }
       toast.success('Tracking ID assigned');
       return { success: true };
     } catch { return { success: false }; }
-  };
+  }, [isBackendConnected]);
 
-  const changeUserRole = async (userId, role) => {
+  const changeUserRole = useCallback(async (uid, role) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      if (isBackendConnected) { try { await adminAPI.users.updateRole(userId, role); } catch {} }
-      setUsers((prev) => prev.map((u) => u.id === userId || u._id === userId ? { ...u, role } : u));
+      if (isBackendConnected) { try { await adminAPI.users.updateRole(uid, role); } catch {} }
+      setUsers((u) => u.map((x) => x.id === uid || x._id === uid ? { ...x, role } : x));
       toast.success('Role updated');
       return { success: true };
-    } catch { return { success: false }; } finally { setIsLoading(false); }
-  };
+    } catch { return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected]);
 
-  const changeUserStatus = async (userId, status) => {
+  const changeUserStatus = useCallback(async (uid, status) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      if (isBackendConnected) { try { await adminAPI.users.updateStatus(userId, status); } catch {} }
-      setUsers((prev) => prev.map((u) => u.id === userId || u._id === userId ? { ...u, status } : u));
+      if (isBackendConnected) { try { await adminAPI.users.updateStatus(uid, status); } catch {} }
+      setUsers((u) => u.map((x) => x.id === uid || x._id === uid ? { ...x, status } : x));
       toast.success('Status updated');
       return { success: true };
-    } catch { return { success: false }; } finally { setIsLoading(false); }
-  };
+    } catch { return { success: false }; }
+    finally { setIsLoading(false); }
+  }, [isBackendConnected]);
 
-  const deleteUser = async (userId) => {
+  const deleteUser = useCallback(async (uid) => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-      if (isBackendConnected) { try { await adminAPI.users.delete(userId); } catch {} }
-      setUsers((prev) => prev.filter((u) => u.id !== userId && u._id !== userId));
+      if (isBackendConnected) { try { await adminAPI.users.delete(uid); } catch {} }
+      setUsers((u) => u.filter((x) => x.id !== uid && x._id !== uid));
       toast.success('User deleted');
       return { success: true };
-    } catch { return { success: false }; } finally { setIsLoading(false); }
-  };
-
-  // ==============================
-  // User Data Fetch
-  // ==============================
-  const fetchUserData = async () => {
-    if (!isAuthenticated) return;
-    try {
-      await getUserProfile();
-      try { const d = await cartAPI.getCart(); const items = d?.cart?.items || d?.data?.items || []; if (Array.isArray(items)) setCart(items.map((i) => { const p = i.product || i; return { id: p._id || p.id, _id: i._id, name: p.name, price: p.price, image: p.images?.[0]?.url || p.image, quantity: i.quantity || 1, ...p }; })); } catch {}
-      try { const d = await wishlistAPI.getWishlist(); const items = d?.wishlist?.items || d?.data?.items || []; if (Array.isArray(items)) setWishlist(items.map((i) => ({ id: i._id || i.id, ...i }))); } catch {}
-      try { const d = await orderAPI.getMyOrders(); const list = d?.orders || d?.data || []; if (Array.isArray(list)) setOrders(list); } catch {}
-      try { const d = await reviewAPI.getMyReviews(); const list = d?.reviews || d?.data || []; if (Array.isArray(list)) setReviews(list); } catch {}
-    } catch {}
-  };
-
-  // ==============================
-  // Cart Actions
-  // ==============================
-  const addToCart = async (product, qty = 1) => {
-    try {
-      setCart((prev) => {
-        const exists = prev.find((i) => i.id === product.id || i.id === product._id);
-        if (exists) return prev.map((i) => (i.id === product.id || i.id === product._id) ? { ...i, quantity: i.quantity + qty } : i);
-        return [...prev, { ...product, quantity: qty }];
-      });
-      setCartCount((prev) => prev + qty);
-      toast.success('Added to cart!');
-      return { success: true };
     } catch { return { success: false }; }
-  };
+    finally { setIsLoading(false); }
+  }, [isBackendConnected]);
 
-  const removeFromCart = async (productId) => {
-    setCart((prev) => prev.filter((i) => i.id !== productId && i._id !== productId));
-    setCartCount((prev) => Math.max(prev - 1, 0));
-    toast.success('Removed from cart');
-    return { success: true };
-  };
-
-  const updateCartQty = async (productId, qty) => {
-    if (qty <= 0) return removeFromCart(productId);
-    setCart((prev) => prev.map((i) => (i.id === productId || i._id === productId) ? { ...i, quantity: qty } : i));
-    return { success: true };
-  };
-
-  const clearCart = async () => {
-    setCart([]); setCartCount(0); setAppliedCoupon(null);
-    toast.success('Cart cleared');
-    return { success: true };
-  };
-
-  // ==============================
-  // Auth Actions
-  // ==============================
-  const loginUser = async (userData, token) => {
+  // LOGIN STATE HANDLER
+  const loginUser = useCallback(async (userData, token) => {
     updateUserState(userData);
-    if (token) localStorage.setItem('luxe_token', token);
-    setIsAuthenticated(true); setIsBackendConnected(true);
-    setTimeout(() => { fetchUserData(); refreshProducts(); refreshCategories(); }, 100);
-  };
+    if (token) storage.setRaw(STORAGE_KEYS.token, token);
+    setIsAuthenticated(true);
+    setIsBackendConnected(true);
+    didFetchUser.current  = false;
+    userFetchLock.current = false;
+    cache.current.clear();
+  }, [updateUserState]);
 
-  const updateCurrentUser = (userData) => { updateUserState(userData); };
+  const updateCurrentUser = useCallback((data) => updateUserState(data), [updateUserState]);
 
-  const logoutUser = async () => {
-    try { if (isBackendConnected) { try { await authAPI.logout(); } catch {} } } catch {}
-    finally {
-      setCurrentUser(null); setIsAuthenticated(false);
-      setCart([]); setWishlist([]); setCartCount(0);
-      localStorage.removeItem('luxe_token'); localStorage.removeItem('luxe_user'); localStorage.removeItem('luxe_cart'); localStorage.removeItem('luxe_wishlist');
-      toast.success('Logged out!');
-      setTimeout(() => { window.location.href = '/'; }, 500);
-    }
-  };
+  const logoutUser = useCallback(async () => {
+    try { if (isBackendConnected) await authAPI.logout().catch(() => {}); } catch {}
 
-  // ==============================
-  // Notifications
-  // ==============================
-  const readNotification = (notifId) => { setNotifications((prev) => prev.map((n) => n.id === notifId || n._id === notifId ? { ...n, read: true } : n)); };
-  const clearAllNotifications = () => { setNotifications((prev) => prev.map((n) => ({ ...n, read: true }))); };
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+    setCart([]);
+    setWishlist([]);
+    setAppliedCoupon(null);
 
-  // ==============================
-  // Wishlist Toggle
-  // ==============================
-  const toggleWishlist = (product) => {
+    syncLock.current      = false;
+    userFetchLock.current = false;
+    didSync.current       = false;
+    didFetchUser.current  = false;
+    prevAuthKey.current   = '';
+    cache.current.clear();
+
+    storage.remove(STORAGE_KEYS.token, STORAGE_KEYS.user, STORAGE_KEYS.cart, STORAGE_KEYS.wishlist);
+    toast.success('Logged out!');
+    setTimeout(() => { window.location.href = '/'; }, 500);
+  }, [isBackendConnected]);
+
+  // NOTIFICATIONS
+  const readNotification    = useCallback((id) => setNotifications((n) => n.map((x) => x.id === id || x._id === id ? { ...x, read: true } : x)), []);
+  const clearAllNotifications = useCallback(() => setNotifications((n) => n.map((x) => ({ ...x, read: true }))), []);
+
+  // WISHLIST
+  const toggleWishlist = useCallback((product) => {
+    const fp = normalizeCartProduct(product) || product;
     setWishlist((prev) => {
-      const exists = prev.find((i) => i.id === product.id || i._id === product._id);
-      if (exists) return prev.filter((i) => i.id !== product.id && i._id !== product._id);
-      return [...prev, { ...product }];
+      const exists = prev.find((i) => isSameProduct(i, fp));
+      return exists ? prev.filter((i) => !isSameProduct(i, fp)) : [...prev, { ...fp }];
     });
-  };
+  }, []);
 
-  // ==============================
-  // Apply Coupon
-  // ==============================
-  const applyCouponCode = (code) => {
-    const valid = [{ code: 'LUXE15', discountType: 'percent', value: 15, minOrder: 2000 }, { code: 'FLAT500', discountType: 'fixed', value: 500, minOrder: 3000 }, { code: 'WELCOME10', discountType: 'percent', value: 10, minOrder: 1000 }, { code: 'LUXE2026', discountType: 'percent', value: 20, minOrder: 5000 }];
-    const coupon = valid.find((c) => c.code.toUpperCase() === code.toUpperCase());
+  // COUPON HOOK
+  const COUPONS = [
+    { code: 'LUXE15',    discountType: 'percent', value: 15,  minOrder: 2000 },
+    { code: 'FLAT500',   discountType: 'fixed',   value: 500, minOrder: 3000 },
+    { code: 'WELCOME10', discountType: 'percent', value: 10,  minOrder: 1000 },
+    { code: 'LUXE2026',  discountType: 'percent', value: 20,  minOrder: 5000 },
+  ];
+
+  const applyCouponCode = useCallback((code) => {
+    const coupon = COUPONS.find((c) => c.code.toUpperCase() === code.toUpperCase());
     if (!coupon) return { success: false, message: 'Invalid code. Try LUXE15, FLAT500, WELCOME10.' };
+
     const total = cart.reduce((a, i) => a + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
     if (total < coupon.minOrder) return { success: false, message: `Min order ₹${coupon.minOrder} required.` };
+
     setAppliedCoupon(coupon);
-    return { success: true, message: `"${coupon.code}" applied! Save ${coupon.discountType === 'percent' ? coupon.value + '%' : '₹' + coupon.value}.` };
-  };
+    return {
+      success: true,
+      message: `"${coupon.code}" applied! Save ${coupon.discountType === 'percent' ? coupon.value + '%' : '₹' + coupon.value}.`,
+    };
+  }, [cart]);
 
-  // ==============================
-  // Track Product View
-  // ==============================
-  const trackProductView = (product) => {
-    setRecentlyViewed((prev) => { const f = prev.filter((p) => p.id !== product.id); return [product, ...f].slice(0, 10); });
-  };
+  // TRACK VIEW
+  const trackProductView = useCallback((product) => {
+    const fp = normalizeCartProduct(product) || product;
+    setRecentlyViewed((prev) => [fp, ...prev.filter((p) => p.id !== fp.id && p._id !== fp._id)].slice(0, 10));
+  }, []);
 
-  // ==============================
-  // Context Value
-  // ==============================
-  const contextValue = {
+  const contextValue = useMemo(() => ({
     products, setProducts,
     categories, setCategories,
     users, setUsers,
@@ -580,23 +1372,42 @@ export const AppProvider = ({ children }) => {
     reviews, setReviews,
     coupons, setCoupons,
     notifications, setNotifications,
+    reels, setReels,
     currentUser, isAuthenticated, isBackendConnected, isLoading,
     cart, cartCount, wishlist, appliedCoupon,
     siteSettings, setSiteSettings,
     recentSearches, recentlyViewed, homeData,
     setRecentSearches, setRecentlyViewed, setAppliedCoupon,
-    refreshProducts, refreshCategories,
-    addToCart, removeFromCart, updateCartQty, clearCart,
+    refreshProducts, refreshCategories, refreshReels,
+    checkBackendHealth, syncBackendData, fetchUserData, fetchCartFromBackend,
+    addToCart, buyNowProduct, removeFromCart, updateCartQty, clearCart,
     getUserProfile, updateUserProfile, changeUserPassword, uploadUserAvatar,
     addAddress, updateAddress, deleteAddress, setDefaultAddress,
     addProduct, deleteProduct, updateProduct,
-    updateOrderStatus, assignTrackingId,
-    changeUserRole, changeUserStatus, deleteUser,
+    addCategory, deleteCategory, // Correct CRUD Category syncing hooks!
+    loginWithEmail, loginWithGoogle, loginWithFacebook,
+    loginWithPhone, loginWithWhatsApp, sendPhoneOTP, sendWhatsAppOTP,
     loginUser, updateCurrentUser, logoutUser,
     readNotification, clearAllNotifications,
-    checkBackendHealth, syncBackendData, fetchUserData,
     toggleWishlist, applyCouponCode, trackProductView,
-  };
+  }), [
+    products, categories, users, orders, reviews, coupons, notifications, reels,
+    currentUser, isAuthenticated, isBackendConnected, isLoading,
+    cart, cartCount, wishlist, appliedCoupon,
+    siteSettings, recentSearches, recentlyViewed, homeData,
+    refreshProducts, refreshCategories, refreshReels,
+    checkBackendHealth, syncBackendData, fetchUserData, fetchCartFromBackend,
+    addToCart, buyNowProduct, removeFromCart, updateCartQty, clearCart,
+    getUserProfile, updateUserProfile, changeUserPassword, uploadUserAvatar,
+    addAddress, updateAddress, deleteAddress, setDefaultAddress,
+    addProduct, deleteProduct, updateProduct,
+    addCategory, deleteCategory,
+    loginWithEmail, loginWithGoogle, loginWithFacebook,
+    loginWithPhone, loginWithWhatsApp, sendPhoneOTP, sendWhatsAppOTP,
+    loginUser, updateCurrentUser, logoutUser,
+    readNotification, clearAllNotifications,
+    toggleWishlist, applyCouponCode, trackProductView,
+  ]);
 
   return (
     <AppContext.Provider value={contextValue}>

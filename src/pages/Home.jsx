@@ -1,858 +1,1056 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import ProductCard from '../components/ProductCard';
-import { FiChevronLeft, FiChevronRight, FiClock, FiStar, FiArrowRight, FiShield, FiTruck, FiRefreshCw, FiAward,FiInstagram, FiHeart } from 'react-icons/fi';
+import AtelierReels from '../components/AtelierReels';
+import {
+  FiChevronLeft,
+  FiChevronRight,
+  FiStar,
+  FiArrowRight,
+  FiShield,
+  FiTruck,
+  FiRefreshCw,
+  FiAward,
+} from 'react-icons/fi';
 import { motion, AnimatePresence } from 'framer-motion';
 
-export default function Home({ onNavigate, onQuickView }) {
-  const { products, categories, recentlyViewed, siteSettings } = useApp();
+/* ── tiny hook: auto-advancing touch slider ── */
+function useSlider(count, autoMs = 3500) {
+  const [idx, setIdx] = useState(0);
+  const timerRef = useRef(null);
 
-  // Hero Slider Index
-  const [heroIndex, setHeroIndex] = useState(0);
+  const reset = () => {
+    clearInterval(timerRef.current);
+    timerRef.current = setInterval(
+      () => setIdx((p) => (p + 1) % count),
+      autoMs
+    );
+  };
 
-const heroSlides = [
-  {
-    title: siteSettings.heroTitle || 'Modern Luxury Fashion',
-    subtitle: siteSettings.heroSubtitle || 'NEW SEASON 2026',
-    desc: siteSettings.heroDescription || 'Premium outfits designed for modern lifestyle.',
-    image: siteSettings.heroImage || 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=1200&auto=format&fit=crop',
-    btnText: "Shop Collection",
-    btnAction: () => onNavigate('shop')
-  },
-  {
-    title: siteSettings.slide2Title || 'Hand-Burnished Italian Leather',
-    subtitle: siteSettings.slide2Subtitle || 'MASTER CRAFTSMANSHIP',
-    desc: siteSettings.slide2Description || 'Florence-inspired full-grain leather jackets.',
-    image: siteSettings.slide2Image || 'https://images.unsplash.com/photo-1490481651871-ab68de25d43d?q=80&w=1200&auto=format&fit=crop',
-    btnText: "Explore Collection",
-    btnAction: () => onNavigate('shop', { category: siteSettings.slide2Category || 'Men' })
-  },
-  {
-    title: siteSettings.slide3Title || 'Mulberry Silk Couture',
-    subtitle: siteSettings.slide3Subtitle || 'SEASONAL EDIT',
-    desc: siteSettings.slide3Description || 'Flowing silhouettes crafted from premium silks.',
-    image: siteSettings.slide3Image || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?q=80&w=1200&auto=format&fit=crop',
-    btnText: "View Collection",
-    btnAction: () => onNavigate('shop', { category: siteSettings.slide3Category || 'Women' })
-  }
-];
-  // Automatic slide transition
   useEffect(() => {
-    const interval = setInterval(() => {
-      setHeroIndex((prev) => (prev + 1) % heroSlides.length);
-    }, 6000);
-    return () => clearInterval(interval);
+    reset();
+    return () => clearInterval(timerRef.current);
+  }, [count]);
+
+  const prev = () => { setIdx((p) => (p - 1 + count) % count); reset(); };
+  const next = () => { setIdx((p) => (p + 1) % count); reset(); };
+  const go   = (i) => { setIdx(i); reset(); };
+
+  return { idx, prev, next, go };
+}
+
+/* ── horizontal drag-to-scroll for card rows ── */
+function useDragScroll() {
+  const ref = useRef(null);
+  const down = useRef(false);
+  const startX = useRef(0);
+  const scrollL = useRef(0);
+
+  const onMouseDown = (e) => {
+    down.current = true;
+    startX.current = e.pageX - ref.current.offsetLeft;
+    scrollL.current = ref.current.scrollLeft;
+  };
+  const onMouseLeave = () => (down.current = false);
+  const onMouseUp    = () => (down.current = false);
+  const onMouseMove  = (e) => {
+    if (!down.current) return;
+    e.preventDefault();
+    const x = e.pageX - ref.current.offsetLeft;
+    ref.current.scrollLeft = scrollL.current - (x - startX.current);
+  };
+  return { ref, onMouseDown, onMouseLeave, onMouseUp, onMouseMove };
+}
+
+export default function Home({ onNavigate, onQuickView }) {
+  const {
+    products      = [],
+    categories    = [],
+    recentlyViewed = [],
+    siteSettings  = {},
+  } = useApp();
+
+  // Dynamic promo banners state reading configuration from local storage dynamically
+  const [promoBanners, setPromoBanners] = useState(() => {
+    try {
+      const saved = localStorage.getItem('luxe_banners_config');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Listen to storage events to update real-time if configured in tabs
+  useEffect(() => {
+    const handleStorageChange = () => {
+      try {
+        const saved = localStorage.getItem('luxe_banners_config');
+        if (saved) setPromoBanners(JSON.parse(saved));
+      } catch {}
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  const handlePrevSlide = () => {
-    setHeroIndex((prev) => (prev - 1 + heroSlides.length) % heroSlides.length);
-  };
+  /* ── hero slider ── */
+  const heroSlides = [
+    {
+      title    : siteSettings.heroTitle    || 'Modern Luxury Fashion',
+      subtitle : siteSettings.heroSubtitle || 'NEW SEASON 2026',
+      desc     : siteSettings.heroDescription || 'Premium outfits crafted for the modern lifestyle.',
+      image    : siteSettings.heroImage    || 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=1920&auto=format&fit=crop',
+      btnText  : 'Shop Collection',
+      btnAction: () => onNavigate('shop'),
+    },
+    {
+      title    : siteSettings.slide2Title    || 'Hand-Burnished Italian Leather',
+      subtitle : siteSettings.slide2Subtitle || 'MASTER CRAFTSMANSHIP',
+      desc     : siteSettings.slide2Description || 'Florence-inspired full-grain leather jackets.',
+      image    : siteSettings.slide2Image    || 'https://images.unsplash.com/photo-1490481651871-ab68de25d43d?q=80&w=1920&auto=format&fit=crop',
+      btnText  : 'Explore Collection',
+      btnAction: () => onNavigate('shop', { category: siteSettings.slide2Category || 'Men' }),
+    },
+    {
+      title    : siteSettings.slide3Title    || 'Mulberry Silk Couture',
+      subtitle : siteSettings.slide3Subtitle || 'SEASONAL EDIT',
+      desc     : siteSettings.slide3Description || 'Flowing silhouettes from the finest premium silks.',
+      image    : siteSettings.slide3Image    || 'https://images.unsplash.com/photo-1483985988355-763728e1935b?q=80&w=1920&auto=format&fit=crop',
+      btnText  : 'View Collection',
+      btnAction: () => onNavigate('shop', { category: siteSettings.slide3Category || 'Women' }),
+    },
+  ];
+  const hero = useSlider(heroSlides.length, 6000);
 
-  const handleNextSlide = () => {
-    setHeroIndex((prev) => (prev + 1) % heroSlides.length);
-  };
+  /* ── category slider (mobile) ── */
+  const catSlider = useSlider(Math.max(1, Math.ceil(categories.length / 2)), 3200);
 
-  // Countdown timer for Flash Sale (dynamic)
+  /* ── product row drag ── */
+  const dealDrag     = useDragScroll();
+  const featDrag     = useDragScroll();
+  const trendDrag    = useDragScroll();
+  const bsDrag       = useDragScroll();
+  const recentDrag   = useDragScroll();
+
+  /* ── countdown ── */
   const [timeLeft, setTimeLeft] = useState({ hours: 8, minutes: 42, seconds: 15 });
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev.seconds > 0) {
-          return { ...prev, seconds: prev.seconds - 1 };
-        } else if (prev.minutes > 0) {
-          return { ...prev, minutes: prev.minutes - 1, seconds: 59 };
-        } else if (prev.hours > 0) {
-          return { hours: prev.hours - 1, minutes: 59, seconds: 59 };
-        } else {
-          return { hours: 12, minutes: 0, seconds: 0 }; // Restart cycle
-        }
+    const t = setInterval(() => {
+      setTimeLeft((p) => {
+        if (p.seconds > 0) return { ...p, seconds: p.seconds - 1 };
+        if (p.minutes > 0) return { ...p, minutes: p.minutes - 1, seconds: 59 };
+        if (p.hours   > 0) return { hours: p.hours - 1, minutes: 59, seconds: 59 };
+        return { hours: 12, minutes: 0, seconds: 0 };
       });
     }, 1000);
-    return () => clearInterval(timer);
+    return () => clearInterval(t);
   }, []);
 
-  // Filter products for homepage segments
- const featuredProducts = products.filter(p => (p.tags || []).includes('featured')).slice(0, 4);
-const trendingProducts = products.filter(p => (p.tags || []).includes('trending')).slice(0, 4);
-const todaysDeals = products.filter(p => (p.tags || []).includes('deal')).slice(0, 4);
-const bestSellers = products.filter(p => (p.tags || []).includes('best-seller')).slice(0, 4);
-  return (
-    <div id="home-page-container" className="bg-bg-base space-y-16 pb-16 transition-all duration-300">
-      
-      {/* 1. Hero Slider Section (Visually matches screenshot) */}
-      <section id="hero-slider" className="relative h-[650px] overflow-hidden bg-black flex items-center">
-        {/* Background Image Container */}
-        <div className="absolute inset-0">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={heroIndex}
-              initial={{ opacity: 0, scale: 1.05 }}
-              animate={{ opacity: 0.65, scale: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.8 }}
-              className="absolute inset-0 bg-cover bg-center"
-              style={{ backgroundImage: `url(${heroSlides[heroIndex].image})` }}
-            />
-          </AnimatePresence>
-        </div>
+  const featured   = products.filter((p) => (p.tags||[]).includes('featured')).slice(0, 8);
+  const trending   = products.filter((p) => (p.tags||[]).includes('trending')).slice(0, 8);
+  const deals      = products.filter((p) => (p.tags||[]).includes('deal')).slice(0, 8);
+  const bestSell   = products.filter((p) => (p.tags||[]).includes('best-seller')).slice(0, 8);
 
-        {/* Content Overlay */}
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full z-10 text-white flex flex-col items-center text-center">
-          <motion.p
-            key={`sub-${heroIndex}`}
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="text-xs sm:text-sm font-bold uppercase tracking-[0.3em] text-secondary mb-3"
-          >
-            {heroSlides[heroIndex].subtitle}
-          </motion.p>
-          <motion.h1
-            key={`title-${heroIndex}`}
-            initial={{ opacity: 0, y: 25 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.5 }}
-            className="text-4xl sm:text-6xl font-extrabold tracking-tight font-display mb-6 uppercase"
-          >
-            {heroSlides[heroIndex].title}
-          </motion.h1>
-          <motion.p
-            key={`desc-${heroIndex}`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4 }}
-            className="text-sm sm:text-lg text-gray-200 max-w-xl mx-auto mb-8 font-light"
-          >
-            {heroSlides[heroIndex].desc}
-          </motion.p>
-          <motion.div
-            key={`btn-${heroIndex}`}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5 }}
-            className="flex space-x-4 justify-center"
-          >
-            <button
-              onClick={heroSlides[heroIndex].btnAction}
-              className="bg-white text-black hover:bg-primary hover:text-white px-8 py-3.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all shadow-lg cursor-pointer hover:scale-105"
-            >
-              {heroSlides[heroIndex].btnText}
-            </button>
-            <button
-              onClick={() => onNavigate('shop')}
-              className="border border-white/60 bg-white/10 hover:bg-white/20 text-white px-8 py-3.5 rounded-full text-xs font-bold uppercase tracking-widest backdrop-blur-sm transition-all cursor-pointer"
-            >
-              Explore Collection
-            </button>
-          </motion.div>
-        </div>
+  /* ── shared styles ── */
+  const scrollRow = {
+    display              : 'flex',
+    gap                  : '12px',
+    overflowX            : 'auto',
+    scrollSnapType       : 'x mandatory',
+    WebkitOverflowScrolling: 'touch',
+    paddingBottom        : '4px',
+    cursor               : 'grab',
+  };
+  const scrollRowHide = { scrollbarWidth: 'none' };
 
-        {/* Navigation Arrows */}
+  /* ── Section Header ── */
+  const SH = ({ eyebrow, title, viewAll, onViewAll }) => (
+    <div className="flex items-end justify-between mb-4 sm:mb-6">
+      <div>
+        <div className="flex items-center gap-2 mb-1">
+          <div className="h-[2px] w-5 rounded-full" style={{ background: 'linear-gradient(90deg,#D4AF37,transparent)' }} />
+          <span className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: '#007A8A' }}>{eyebrow}</span>
+        </div>
+        <h2 className="font-sans font-bold text-lg sm:text-xl md:text-2xl tracking-tight" style={{ color: '#1A1A3A' }}>{title}</h2>
+      </div>
+      {viewAll && (
         <button
-          onClick={handlePrevSlide}
-          className="absolute left-4 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white text-white hover:text-black p-3 rounded-full backdrop-blur-xs transition-all z-20 cursor-pointer hidden md:block"
+          onClick={onViewAll}
+          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wide border transition-all duration-300"
+          style={{ color: '#1A1A3A', borderColor: 'rgba(212,175,55,0.4)', backgroundColor: 'transparent' }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#1A1A3A'; e.currentTarget.style.color = '#D4AF37'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#1A1A3A'; }}
         >
-          <FiChevronLeft size={18} />
+          View All <FiArrowRight size={11} />
         </button>
-        <button
-          onClick={handleNextSlide}
-          className="absolute right-4 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white text-white hover:text-black p-3 rounded-full backdrop-blur-xs transition-all z-20 cursor-pointer hidden md:block"
-        >
-          <FiChevronRight size={18} />
-        </button>
+      )}
+    </div>
+  );
 
-        {/* Indicators */}
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex space-x-2 z-20">
-          {heroSlides.map((_, idx) => (
-            <button
-              key={idx}
-              onClick={() => setHeroIndex(idx)}
-              className={`h-2 rounded-full transition-all ${idx === heroIndex ? 'w-8 bg-white' : 'w-2 bg-white/45'}`}
-            />
-          ))}
-        </div>
-      </section>
-{/* 2. Brand Value Props Section */}
-<section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-  <div className="relative bg-gradient-to-br from-white via-white to-slate-50/50 rounded-3xl p-6 md:p-8 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.1)] border border-gray-100/80 backdrop-blur-sm overflow-hidden">
-    
-    {/* Decorative background blobs */}
-    <div className="absolute -top-24 -right-24 w-64 h-64 bg-gradient-to-br from-blue-100/40 to-purple-100/40 rounded-full blur-3xl pointer-events-none" />
-    <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-gradient-to-tr from-orange-100/30 to-pink-100/30 rounded-full blur-3xl pointer-events-none" />
-
-    <div className="relative grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-      {[
-        {
-          icon: <FiTruck size={22} />,
-          title: "Complimentary Delivery",
-          desc: "Free shipping across India above ₹999.",
-          iconColor: "text-blue-600",
-          iconBg: "bg-gradient-to-br from-blue-50 to-blue-100/70",
-          glow: "group-hover:shadow-blue-200/60",
-          accent: "from-blue-500/0 via-blue-500/70 to-blue-500/0",
-        },
-        {
-          icon: <FiAward size={22} />,
-          title: "Elite Craft Guarantee",
-          desc: "100% certified authentic premium design.",
-          iconColor: "text-orange-500",
-          iconBg: "bg-gradient-to-br from-orange-50 to-amber-100/70",
-          glow: "group-hover:shadow-orange-200/60",
-          accent: "from-orange-500/0 via-orange-500/70 to-orange-500/0",
-        },
-        {
-          icon: <FiRefreshCw size={22} />,
-          title: "Concierge Return Policy",
-          desc: "Easy 14-day premium return portal.",
-          iconColor: "text-emerald-600",
-          iconBg: "bg-gradient-to-br from-emerald-50 to-green-100/70",
-          glow: "group-hover:shadow-emerald-200/60",
-          accent: "from-emerald-500/0 via-emerald-500/70 to-emerald-500/0",
-        },
-        {
-          icon: <FiShield size={22} />,
-          title: "256-bit Encrypted SSL",
-          desc: "Completely secure biometric payment gate.",
-          iconColor: "text-purple-600",
-          iconBg: "bg-gradient-to-br from-purple-50 to-violet-100/70",
-          glow: "group-hover:shadow-purple-200/60",
-          accent: "from-purple-500/0 via-purple-500/70 to-purple-500/0",
-        },
-      ].map((item, idx) => (
+  /* ── Mobile product scroll row ── */
+  const MobileRow = ({ drag, items }) => (
+    <div
+      ref={drag.ref}
+      style={{ ...scrollRow, ...scrollRowHide }}
+      onMouseDown={drag.onMouseDown}
+      onMouseLeave={drag.onMouseLeave}
+      onMouseUp={drag.onMouseUp}
+      onMouseMove={drag.onMouseMove}
+    >
+      {items.map((item) => (
         <div
-          key={idx}
-          className="group relative flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 p-3 rounded-2xl transition-all duration-500 hover:bg-white/80 cursor-pointer"
+          key={item.id || item._id}
+          style={{ minWidth: '160px', width: '160px', scrollSnapAlign: 'start', flexShrink: 0 }}
         >
-          {/* Top accent line on hover */}
-          <div className={`absolute top-0 left-1/2 -translate-x-1/2 h-[2px] w-0 bg-gradient-to-r ${item.accent} group-hover:w-3/4 transition-all duration-500 rounded-full`} />
-
-          {/* Icon Container with premium effects */}
-          <div className="relative flex-shrink-0">
-            {/* Glow ring */}
-            <div className={`absolute inset-0 ${item.iconBg} rounded-2xl blur-md opacity-0 group-hover:opacity-70 transition-opacity duration-500`} />
-            
-            <div
-              className={`relative p-3.5 ${item.iconBg} rounded-2xl shadow-sm ${item.glow} group-hover:shadow-lg transition-all duration-500 group-hover:scale-110 group-hover:-rotate-6`}
-            >
-              <div className={`${item.iconColor} transition-transform duration-500 group-hover:rotate-6`}>
-                {item.icon}
-              </div>
-            </div>
-          </div>
-
-          {/* Text Content */}
-          <div className="flex-1 min-w-0">
-            <h4 className="text-[11px] md:text-xs font-bold text-gray-800 uppercase tracking-wider leading-snug group-hover:text-gray-900 transition-colors">
-              {item.title}
-            </h4>
-            <p className="text-[11px] text-gray-500 mt-1 leading-relaxed group-hover:text-gray-600 transition-colors">
-              {item.desc}
-            </p>
-          </div>
-
-          {/* Vertical divider between items (desktop only) */}
-          {idx < 3 && (
-            <div className="hidden lg:block absolute right-0 top-1/2 -translate-y-1/2 h-10 w-px bg-gradient-to-b from-transparent via-gray-200/80 to-transparent" />
-          )}
+          <ProductCard product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
         </div>
       ))}
     </div>
-  </div>
-</section>
+  );
 
-     {/* 3. Browse Premium Categories Section */}
-<section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-  
-  {/* Header */}
-  <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-    <div className="relative">
-      <div className="flex items-center gap-2">
-        <div className="h-[2px] w-8 bg-gradient-to-r from-primary to-transparent" />
-        <span className="text-[10px] text-primary uppercase font-bold tracking-[0.25em]">
-          Explore Ateliers
-        </span>
-      </div>
-      <h2 className="font-display font-extrabold text-2xl md:text-3xl text-black mt-2 uppercase tracking-tight">
-        Shop By Category
-      </h2>
-    </div>
+  return (
+    <div className="pb-16" style={{ backgroundColor: '#F4F4F6' }}>
 
-    <button
-      onClick={() => onNavigate('shop')}
-      className="group relative text-xs font-bold text-primary flex items-center gap-2 px-4 py-2 rounded-full border border-primary/20 hover:border-primary/40 hover:bg-primary/5 transition-all duration-300"
-    >
-      <span>Browse All Categories</span>
-      <FiArrowRight size={12} className="group-hover:translate-x-1 transition-transform duration-300" />
-    </button>
-  </div>
+      {/* ══════════════════════════════════════
+          1. HERO
+      ══════════════════════════════════════ */}
+      <section className="relative overflow-hidden w-full" style={{ height: 'clamp(480px,82vh,760px)' }}>
 
-  {/* Categories Grid */}
-  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 md:gap-5">
-    {categories.map((cat, idx) => (
-      <div
-        key={cat.id}
-        onClick={() => onNavigate('shop', { category: cat.slug })}
-        className="group relative bg-white rounded-2xl md:rounded-3xl overflow-hidden cursor-pointer shadow-sm hover:shadow-2xl transition-all duration-500 aspect-[4/5]"
-        style={{ animationDelay: `${idx * 50}ms` }}
-      >
-        {/* Border glow on hover */}
-        <div className="absolute inset-0 rounded-2xl md:rounded-3xl ring-1 ring-inset ring-gray-100 group-hover:ring-2 group-hover:ring-primary/30 transition-all duration-500 z-20 pointer-events-none" />
+        <AnimatePresence mode="sync">
+          {heroSlides.map((slide, i) =>
+            i === hero.idx ? (
+              <motion.div key={i} className="absolute inset-0"
+                initial={{ opacity: 0, scale: 1.04 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.9, ease: 'easeInOut' }}
+              >
+                <img
+                  src={slide.image} alt={slide.title} draggable={false}
+                  className="w-full h-full object-cover object-center"
+                  onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=1920'; }}
+                />
+                {/* left vignette */}
+                <div className="absolute inset-0" style={{ background: 'linear-gradient(100deg,rgba(8,8,22,0.72) 0%,rgba(8,8,22,0.35) 42%,rgba(8,8,22,0.06) 70%,transparent 100%)' }} />
+                {/* bottom fade */}
+                <div className="absolute bottom-0 left-0 right-0 h-24" style={{ background: 'linear-gradient(to top,rgba(8,8,22,0.55),transparent)' }} />
+              </motion.div>
+            ) : null
+          )}
+        </AnimatePresence>
 
-        {/* Image with zoom + slight rotate */}
-        <div className="absolute inset-0 overflow-hidden">
-          <img
-            src={cat.image}
-            alt={cat.name}
-            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out"
-          />
-        </div>
+        {/* gold top bar */}
+        <div className="absolute top-0 inset-x-0 h-[3px] z-30" style={{ background: 'linear-gradient(90deg,#D4AF37,#007A8A 50%,#D4AF37)' }} />
 
-        {/* Shimmer sweep effect */}
-        <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-out bg-gradient-to-r from-transparent via-white/20 to-transparent z-10 pointer-events-none" />
-
-        {/* Base gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/0 group-hover:from-black/90 transition-all duration-500" />
-
-        {/* Item count badge - top right */}
-        <div className="absolute top-3 right-3 z-20 opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300">
-          <span className="text-[8px] font-bold text-white bg-white/20 backdrop-blur-md px-2 py-1 rounded-full border border-white/30">
-            NEW
-          </span>
-        </div>
-
-        {/* Content */}
-        <div className="absolute inset-0 flex flex-col justify-end p-4 text-white z-20">
-          {/* Bottom accent line */}
-          <div className="h-[2px] w-8 bg-primary mb-2 group-hover:w-12 transition-all duration-500" />
-          
-          <h3 className="font-display font-bold text-sm md:text-base tracking-wider uppercase leading-tight group-hover:translate-x-1 transition-transform duration-300">
-            {cat.name}
-          </h3>
-          
-          <div className="flex items-center justify-between mt-1.5">
-            <p className="text-[9px] md:text-[10px] text-gray-300 font-medium">
-              {cat.productCount || 0} Premium Items
-            </p>
-            
-            {/* Arrow icon - appears on hover */}
-            <div className="w-6 h-6 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 transition-all duration-300 border border-white/20">
-              <FiArrowRight size={10} className="text-white" />
-            </div>
-          </div>
-        </div>
-
-        {/* Corner decoration */}
-        <div className="absolute top-0 left-0 w-16 h-16 opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-10">
-          <div className="absolute top-3 left-3 w-4 h-[1.5px] bg-white/60" />
-          <div className="absolute top-3 left-3 w-[1.5px] h-4 bg-white/60" />
-        </div>
-      </div>
-    ))}
-  </div>
-</section>
- {/* 4. FLASH SALE - UPDATED ORBITAL ANIMATION */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 overflow-hidden">
-        <div className="relative bg-[#0a0a0a] text-white rounded-[2rem] overflow-hidden shadow-2xl border border-white/5">
-          
-          <div className="absolute -top-40 -right-20 w-[500px] h-[500px] bg-secondary/20 rounded-full blur-[130px]" />
-          <div className="absolute -bottom-40 left-1/4 w-[400px] h-[400px] bg-purple-600/15 rounded-full blur-[130px]" />
-          <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff08_1px,transparent_1px),linear-gradient(to_bottom,#ffffff08_1px,transparent_1px)] bg-[size:40px_40px] [mask-image:radial-gradient(ellipse_80%_80%_at_50%_50%,black,transparent)]" />
-
-          {/* Marquee */}
-          <div className="relative z-10 border-b border-white/10 overflow-hidden py-2.5 bg-white/[0.02]">
-            <div className="flex whitespace-nowrap animate-marquee">
-              {Array(2).fill(0).map((_, i) => (
-                <div key={i} className="flex items-center gap-8 px-4">
-                  
+        {/* content */}
+        <div className="relative z-20 h-full flex items-center">
+          <div className="max-w-7xl mx-auto px-5 sm:px-10 lg:px-16 w-full">
+            <AnimatePresence mode="wait">
+              <motion.div key={`h-${hero.idx}`}
+                initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -18 }} transition={{ duration: 0.5 }}
+                className="max-w-md"
+              >
+                {/* eyebrow */}
+                <div className="flex items-center gap-2.5 mb-3">
+                  <span className="block w-7 h-[2px] rounded-full" style={{ backgroundColor: '#D4AF37' }} />
+                  <span className="text-[10px] font-bold uppercase tracking-[0.32em]" style={{ color: '#D4AF37' }}>
+                    {heroSlides[hero.idx].subtitle}
+                  </span>
                 </div>
-              ))}
-            </div>
+
+                {/* title — clean sans-serif, moderate size */}
+                <h1
+                  className="font-sans font-bold text-white leading-tight mb-3"
+                  style={{ fontSize: 'clamp(1.75rem, 4.2vw, 3.4rem)', letterSpacing: '-0.01em', textShadow: '0 2px 24px rgba(0,0,0,0.22)' }}
+                >
+                  {heroSlides[hero.idx].title}
+                </h1>
+
+                <div className="w-10 h-[2px] rounded-full mb-4" style={{ backgroundColor: '#D4AF37' }} />
+
+                <p className="text-sm font-light leading-relaxed mb-6 max-w-xs" style={{ color: 'rgba(255,255,255,0.82)' }}>
+                  {heroSlides[hero.idx].desc}
+                </p>
+
+                <div className="flex flex-col sm:flex-row gap-2.5">
+                  <button
+                    onClick={heroSlides[hero.idx].btnAction}
+                    className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full text-[11px] font-bold uppercase tracking-[0.16em] transition-all duration-300 hover:scale-105"
+                    style={{ backgroundColor: '#D4AF37', color: '#1A1A3A', boxShadow: '0 6px 28px rgba(212,175,55,0.48)' }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#c49e2f')}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#D4AF37')}
+                  >
+                    {heroSlides[hero.idx].btnText} <FiArrowRight size={13} />
+                  </button>
+                  <button
+                    onClick={() => onNavigate('shop')}
+                    className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full text-[11px] font-bold uppercase tracking-[0.16em] transition-all duration-300 hover:scale-105"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.11)', border: '1.5px solid rgba(255,255,255,0.38)', color: '#fff', backdropFilter: 'blur(12px)' }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.11)')}
+                  >
+                    Browse All
+                  </button>
+                </div>
+              </motion.div>
+            </AnimatePresence>
           </div>
+        </div>
 
-          <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-10 p-8 sm:p-10 lg:p-14 items-center min-h-[600px]">
-            {/* LEFT: Content */}
-            <div className="lg:col-span-6 space-y-6 text-center lg:text-left z-20">
-              <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-2 rounded-full">
-                <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute h-full w-full rounded-full bg-secondary opacity-75" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-secondary" /></span>
-                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-300">Flash Sale · Ends Tonight</span>
+        {/* arrows */}
+        {[
+          { side: 'left-4 sm:left-6', fn: hero.prev, Icon: FiChevronLeft },
+          { side: 'right-4 sm:right-6', fn: hero.next, Icon: FiChevronRight },
+        ].map(({ side, fn, Icon }) => (
+          <button key={side} onClick={fn}
+            className={`absolute ${side} top-1/2 -translate-y-1/2 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 hover:scale-110`}
+            style={{ backgroundColor: 'rgba(255,255,255,0.1)', border: '1.5px solid rgba(212,175,55,0.42)', color: '#D4AF37', backdropFilter: 'blur(10px)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#D4AF37'; e.currentTarget.style.color = '#1A1A3A'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#D4AF37'; }}
+          >
+            <Icon size={18} />
+          </button>
+        ))}
+
+        {/* dots */}
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2">
+          {heroSlides.map((_, i) => (
+            <button key={i} onClick={() => hero.go(i)} className="rounded-full transition-all duration-400"
+              style={{ width: i === hero.idx ? '30px' : '7px', height: '7px', backgroundColor: i === hero.idx ? '#D4AF37' : 'rgba(212,175,55,0.36)' }}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════
+          2. TRUST BADGES
+      ══════════════════════════════════════ */}
+      <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 -mt-6 relative z-20">
+        <div className="rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl"
+          style={{ background: 'linear-gradient(135deg,#1A1A3A 0%,#252560 50%,#1A1A3A 100%)', border: '1px solid rgba(212,175,55,0.15)' }}
+        >
+          <div className="h-[2px]" style={{ background: 'linear-gradient(90deg,transparent,#D4AF37,transparent)' }} />
+          <div className="grid grid-cols-2 lg:grid-cols-4">
+            {[
+              { icon: <FiTruck size={20} />,     title: 'Free Delivery',     desc: 'Orders above ₹999',           color: '#007A8A' },
+              { icon: <FiAward size={20} />,     title: 'Authentic Quality', desc: '100% certified premium',      color: '#D4AF37' },
+              { icon: <FiRefreshCw size={20} />, title: 'Easy Returns',      desc: '14-day hassle-free returns',  color: '#007A8A' },
+              { icon: <FiShield size={20} />,    title: 'Secure Payments',   desc: '256-bit SSL encrypted',       color: '#D4AF37' },
+            ].map((item, i) => (
+              <div key={i}
+                className="flex items-center gap-3 p-3.5 sm:p-5 transition-all duration-300"
+                style={{ borderRight: i < 3 ? '1px solid rgba(255,255,255,0.05)' : 'none', borderBottom: i < 2 ? '1px solid rgba(255,255,255,0.05)' : 'none' }}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)')}
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+              >
+                <div className="flex-shrink-0 w-9 h-9 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center transition-transform duration-300 hover:scale-110"
+                  style={{ backgroundColor: `${item.color}18`, border: `1px solid ${item.color}35`, color: item.color }}
+                >
+                  {item.icon}
+                </div>
+                <div>
+                  <h4 className="text-[10px] sm:text-[11px] font-black uppercase tracking-wide" style={{ color: '#F8F8F8' }}>{item.title}</h4>
+                  <p className="text-[9px] mt-0.5 hidden sm:block" style={{ color: 'rgba(248,248,248,0.45)' }}>{item.desc}</p>
+                </div>
               </div>
-              <h2 className="font-display font-extrabold text-4xl sm:text-6xl uppercase tracking-tight leading-[0.95]">The Outlet<br /><span className="text-secondary">Vault</span></h2>
-              <p className="text-sm text-gray-400 font-light max-w-md mx-auto lg:mx-0">Elite access to limited run collections. Get up to <span className="text-white font-medium">40% off</span> the entire vault.</p>
+            ))}
+          </div>
+        </div>
+      </section>
 
-              {/* Countdown */}
-              <div className="flex items-center justify-center lg:justify-start gap-3">
-                {[{ label: "HRS", val: timeLeft.hours }, { label: "MIN", val: timeLeft.minutes }, { label: "SEC", val: timeLeft.seconds }].map((t, idx) => (
-                  <div key={idx} className="flex flex-col items-center">
-                    <div className="bg-white text-black rounded-xl w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-2xl font-bold font-mono">{String(t.val).padStart(2, '0')}</div>
-                    <span className="text-[9px] uppercase text-gray-500 font-bold mt-2">{t.label}</span>
-                  </div>
+      {/* ══════════════════════════════════════
+          3. CATEGORIES
+          Desktop: grid | Mobile: auto-slider
+      ══════════════════════════════════════ */}
+      <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+        <SH eyebrow="Explore Ateliers" title="Shop By Category" viewAll onViewAll={() => onNavigate('shop')} />
+
+        {/* ── DESKTOP grid ── */}
+        <div className="hidden sm:grid sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          {categories.map((cat, i) => (
+            <CatCard key={cat.id || cat._id || i} cat={cat} onNavigate={onNavigate} />
+          ))}
+        </div>
+
+        {/* ── MOBILE slider (2 cards per view, auto-advance) ── */}
+        <div className="sm:hidden relative">
+          <div className="overflow-hidden rounded-2xl">
+            <AnimatePresence mode="wait">
+              <motion.div key={catSlider.idx}
+                initial={{ opacity: 0, x: 40 }} animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -40 }} transition={{ duration: 0.38 }}
+                className="grid grid-cols-2 gap-3"
+              >
+                {categories
+                  .slice(catSlider.idx * 2, catSlider.idx * 2 + 2)
+                  .map((cat, i) => (
+                    <CatCard key={cat.id || cat._id || i} cat={cat} onNavigate={onNavigate} />
+                  ))}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+          {/* dots */}
+          <div className="flex justify-center gap-1.5 mt-3">
+            {Array.from({ length: Math.ceil(categories.length / 2) }).map((_, i) => (
+              <button key={i} onClick={() => catSlider.go(i)}
+                className="rounded-full transition-all duration-400"
+                style={{ width: i === catSlider.idx ? '22px' : '6px', height: '6px', backgroundColor: i === catSlider.idx ? '#D4AF37' : 'rgba(212,175,55,0.35)' }}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════
+          4. OUTLET VAULT
+      ══════════════════════════════════════ */}
+      <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+        <div className="relative rounded-3xl overflow-hidden"
+          style={{ background: 'linear-gradient(135deg,#060614 0%,#1A1A3A 45%,#0a0a1e 100%)', border: '1px solid rgba(212,175,55,0.12)', boxShadow: '0 28px 70px rgba(10,10,30,0.4)' }}
+        >
+          <div className="absolute top-0 right-0 w-96 h-96 rounded-full blur-[120px] opacity-15 pointer-events-none" style={{ backgroundColor: '#D4AF37', transform: 'translate(35%,-35%)' }} />
+          <div className="absolute top-0 left-0 right-0 h-[2px]" style={{ background: 'linear-gradient(90deg,transparent,#D4AF37 40%,#007A8A 60%,transparent)' }} />
+
+          <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2">
+            {/* left */}
+            <div className="flex flex-col justify-center p-6 sm:p-10 md:p-12 space-y-5 sm:space-y-6 text-center lg:text-left">
+              <div className="flex justify-center lg:justify-start">
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full"
+                  style={{ backgroundColor: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.2)' }}
+                >
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute h-full w-full rounded-full opacity-75" style={{ backgroundColor: '#D4AF37' }} />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ backgroundColor: '#D4AF37' }} />
+                  </span>
+                  <span className="text-[9px] font-black uppercase tracking-[0.22em]" style={{ color: '#D4AF37' }}>Flash Sale · Live Now</span>
+                </div>
+              </div>
+
+              <div>
+                <h2 className="font-sans font-bold uppercase leading-tight" style={{ fontSize: 'clamp(2rem,5vw,3.8rem)', color: '#F8F8F8', letterSpacing: '-0.015em' }}>
+                  The Outlet<br /><span style={{ color: '#D4AF37' }}>Vault</span>
+                </h2>
+                <p className="mt-3 text-sm font-light max-w-xs mx-auto lg:mx-0" style={{ color: 'rgba(248,248,248,0.55)' }}>
+                  Up to <span className="font-semibold" style={{ color: '#D4AF37' }}>40% off</span> limited-run collections — tonight only.
+                </p>
+              </div>
+
+              {/* countdown */}
+              <div className="flex items-center justify-center lg:justify-start gap-2 sm:gap-3">
+                {[{ label: 'HRS', val: timeLeft.hours }, { label: 'MIN', val: timeLeft.minutes }, { label: 'SEC', val: timeLeft.seconds }].map((t, i) => (
+                  <React.Fragment key={i}>
+                    <div className="flex flex-col items-center">
+                      <div className="rounded-xl flex items-center justify-center font-bold font-mono"
+                        style={{ width: 'clamp(3rem,9vw,4.5rem)', height: 'clamp(3rem,9vw,4.5rem)', fontSize: 'clamp(1.2rem,2.8vw,2rem)', backgroundColor: '#D4AF37', color: '#1A1A3A', boxShadow: '0 6px 20px rgba(212,175,55,0.38)' }}
+                      >
+                        {String(t.val).padStart(2, '0')}
+                      </div>
+                      <span className="text-[8px] uppercase font-black mt-1.5 tracking-widest" style={{ color: 'rgba(212,175,55,0.6)' }}>{t.label}</span>
+                    </div>
+                    {i < 2 && <span className="text-2xl font-black mb-4" style={{ color: 'rgba(212,175,55,0.45)' }}>:</span>}
+                  </React.Fragment>
                 ))}
               </div>
-              <button onClick={() => onNavigate('shop', { filter: 'deal' })} className="bg-secondary text-white text-xs font-bold uppercase tracking-[0.15em] px-9 py-4 rounded-full flex items-center gap-2 mx-auto lg:mx-0 hover:scale-105 transition-all">Shop The Vault <FiArrowRight /></button>
-            </div>
 
-            {/* RIGHT: Orbit Visualizer */}
-            <div className="lg:col-span-6 relative h-[450px] sm:h-[550px] flex items-center justify-center">
-              
-              {/* Outer Orbit Path (Dashed Circle) */}
-              <div className="absolute w-[320px] h-[320px] sm:w-[420px] sm:h-[420px] rounded-full border border-dashed border-white/10 animate-[spin_30s_linear_infinite]">
-                
-                {/* Women Planet */}
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2">
-                   <div className="animate-[spin_30s_linear_infinite_reverse] flex flex-col items-center group cursor-pointer">
-                      <div className="relative">
-                        <img src="https://images.unsplash.com/photo-1539008835657-9e8e9680c956?w=200" alt="Women" className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 border-white/20 object-cover shadow-2xl group-hover:scale-110 transition-transform" />
-                        <div className="absolute -bottom-1 -right-1 bg-secondary text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full">-40%</div>
-                      </div>
-                      <span className="mt-2 bg-black/80 px-2 py-0.5 rounded-full text-[8px] font-bold text-white tracking-widest">WOMEN</span>
-                   </div>
-                </div>
-
-                {/* Kids Planet */}
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2">
-                   <div className="animate-[spin_30s_linear_infinite_reverse] flex flex-col items-center group cursor-pointer">
-                      <div className="relative">
-                        <img src="https://images.unsplash.com/photo-1519238263530-99bdd11df2ea?w=200" alt="Kids" className="w-14 h-14 sm:w-16 sm:h-16 rounded-full border-2 border-white/20 object-cover shadow-2xl group-hover:scale-110 transition-transform" />
-                        <div className="absolute -bottom-1 -right-1 bg-secondary text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full">-30%</div>
-                      </div>
-                      <span className="mt-2 bg-black/80 px-2 py-0.5 rounded-full text-[8px] font-bold text-white tracking-widest">KIDS</span>
-                   </div>
-                </div>
-              </div>
-
-              {/* Inner Orbit Path (Men) */}
-              <div className="absolute w-[220px] h-[220px] sm:w-[280px] sm:h-[280px] rounded-full border border-white/5 animate-[spin_20s_linear_infinite_reverse]">
-                {/* Men Planet */}
-                <div className="absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2">
-                   <div className="animate-[spin_20s_linear_infinite] flex flex-col items-center group cursor-pointer">
-                      <div className="relative">
-                        <img src="https://images.unsplash.com/photo-1617137968427-85924c800a22?w=200" alt="Men" className="w-16 h-16 sm:w-18 sm:h-18 rounded-full border-2 border-white/20 object-cover shadow-2xl group-hover:scale-110 transition-transform" />
-                        <div className="absolute -bottom-1 -right-1 bg-secondary text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full">-40%</div>
-                      </div>
-                      <span className="mt-2 bg-black/80 px-2 py-0.5 rounded-full text-[8px] font-bold text-white tracking-widest">MEN</span>
-                   </div>
-                </div>
-              </div>
-
-              {/* Center Sun */}
-              <div className="relative z-10 w-32 h-32 sm:w-44 sm:h-44 rounded-full bg-gradient-to-br from-white/10 to-transparent backdrop-blur-2xl border border-white/20 flex flex-col items-center justify-center shadow-2xl">
-                <p className="text-[10px] uppercase tracking-widest text-gray-300">UP TO</p>
-                <div className="flex items-start">
-                  <span className="text-5xl sm:text-7xl font-display font-black text-secondary">40</span>
-                  <span className="text-2xl font-bold text-secondary mt-2">%</span>
-                </div>
-                <p className="text-[10px] uppercase tracking-widest text-gray-300">OFF VAULT</p>
+              <div className="flex justify-center lg:justify-start">
+                <button onClick={() => onNavigate('shop', { filter: 'deal' })}
+                  className="inline-flex items-center gap-2.5 text-[11px] font-bold uppercase tracking-[0.16em] px-7 py-3.5 rounded-full transition-all duration-300 hover:scale-105"
+                  style={{ backgroundColor: '#D4AF37', color: '#1A1A3A', boxShadow: '0 6px 28px rgba(212,175,55,0.42)' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#c49e2f')}
+                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#D4AF37')}
+                >
+                  Shop The Vault <FiArrowRight size={13} />
+                </button>
               </div>
             </div>
+
+            {/* right orbit */}
+            <div className="relative flex items-center justify-center p-6 sm:p-10" style={{ minHeight: 'clamp(300px,42vw,460px)' }}>
+              {/* center */}
+              <div className="relative z-10 rounded-full flex flex-col items-center justify-center"
+                style={{ width: 'clamp(120px,17vw,176px)', height: 'clamp(120px,17vw,176px)', background: 'radial-gradient(circle,rgba(212,175,55,0.2) 0%,rgba(0,122,138,0.1) 100%)', border: '2px solid rgba(212,175,55,0.3)', backdropFilter: 'blur(20px)', boxShadow: '0 0 70px rgba(212,175,55,0.2)' }}
+              >
+                <p className="text-[8px] uppercase tracking-widest" style={{ color: 'rgba(212,175,55,0.7)' }}>UP TO</p>
+                <div className="flex items-start leading-none">
+                  <span className="font-sans font-black" style={{ fontSize: 'clamp(2.6rem,6.5vw,4.4rem)', color: '#D4AF37' }}>40</span>
+                  <span className="font-bold mt-1" style={{ fontSize: 'clamp(1.1rem,2.5vw,1.9rem)', color: '#D4AF37' }}>%</span>
+                </div>
+                <p className="text-[8px] uppercase tracking-widest" style={{ color: 'rgba(212,175,55,0.7)' }}>OFF VAULT</p>
+              </div>
+
+              {[
+                { img: 'https://images.unsplash.com/photo-1539008835657-9e8e9680c956?w=300&auto=format&fit=crop&q=80', label: 'WOMEN', disc: '-40%', angle: -90, r: 148 },
+                { img: 'https://images.unsplash.com/photo-1617137968427-85924c800a22?w=300&auto=format&fit=crop&q=80', label: 'MEN',   disc: '-40%', angle: 30,  r: 148 },
+                { img: 'https://images.unsplash.com/photo-1519238263530-99bdd11df2ea?w=300&auto=format&fit=crop&q=80', label: 'KIDS',  disc: '-30%', angle: 150, r: 148 },
+              ].map((it, i) => {
+                const rad = (it.angle * Math.PI) / 180;
+                return (
+                  <div key={i} className="absolute flex flex-col items-center group cursor-pointer"
+                    style={{ left: '50%', top: '50%', transform: `translate(calc(-50% + ${it.r * Math.cos(rad)}px), calc(-50% + ${it.r * Math.sin(rad)}px))` }}
+                  >
+                    <div className="relative">
+                      <img src={it.img} alt={it.label}
+                        className="rounded-full object-cover shadow-2xl group-hover:scale-110 transition-transform duration-400"
+                        style={{ width: 'clamp(54px,8vw,82px)', height: 'clamp(54px,8vw,82px)', objectFit: 'cover', objectPosition: 'center top', border: '2px solid rgba(212,175,55,0.5)', boxShadow: '0 6px 20px rgba(0,0,0,0.4)' }}
+                        onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=200'; }}
+                      />
+                      <div className="absolute -bottom-1 -right-1 text-[7px] font-black px-1.5 py-0.5 rounded-full"
+                        style={{ backgroundColor: '#D4AF37', color: '#1A1A3A' }}>{it.disc}</div>
+                    </div>
+                    <span className="mt-1.5 px-2 py-0.5 rounded-full text-[7px] font-black tracking-widest"
+                      style={{ backgroundColor: 'rgba(26,26,58,0.9)', color: '#D4AF37', border: '1px solid rgba(212,175,55,0.2)' }}>{it.label}</span>
+                  </div>
+                );
+              })}
+
+              {/* rings */}
+              <div className="absolute rounded-full border border-dashed pointer-events-none"
+                style={{ width: 'clamp(220px,34vw,330px)', height: 'clamp(220px,34vw,330px)', borderColor: 'rgba(212,175,55,0.1)', left: '50%', top: '50%', transform: 'translate(-50%,-50%)' }} />
+            </div>
           </div>
         </div>
       </section>
 
-
-      {/* 5. Today's Deals Section */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-        <div>
-          <span className="text-[10px] text-primary uppercase font-bold tracking-[0.2em]">Exclusive Markdown</span>
-          <h2 className="font-display font-extrabold text-2xl text-black mt-1 uppercase">Today's Luxury Deals</h2>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {todaysDeals.map((item) => (
-            <ProductCard key={item.id || item._id} product={item}  onNavigate={onNavigate} onQuickView={onQuickView} />
-          ))}
-        </div>
-      </section>
-
-      {/* 6. Featured Products Section */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-        <div>
-          <span className="text-[10px] text-primary uppercase font-bold tracking-[0.2em]">Handpicked Masterpieces</span>
-          <h2 className="font-display font-extrabold text-2xl text-black mt-1 uppercase">Featured Collection</h2>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {featuredProducts.map((item) => (
-            <ProductCard key={item.id} product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
-          ))}
-        </div>
-      </section>
-
- {/* 7. Premium Glassmorphism Banners - Men, Women & Kids */}
-<section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
-    
-    {/* Men's Collection */}
-    <div className="relative rounded-3xl overflow-hidden h-[420px] group">
-      <img
-        src="https://media.istockphoto.com/id/1293366109/photo/this-one-match-perfect-with-me.webp?a=1&b=1&s=612x612&w=0&k=20&c=e0bOeR004rMmcAvXUYAIiJZJ01pgAFX7ThFqfzyvMac="
-        alt="Men's Collection"
-        className="absolute inset-0 w-full h-full object-cover brightness-90 group-hover:scale-105 transition-transform duration-1000"
-      />
-      
-      <div className="absolute inset-6 bg-black/20 backdrop-blur-xl border border-white/20 rounded-2xl p-8 flex flex-col justify-between group-hover:bg-black/30 transition-all duration-500">
-        <div className="inline-flex w-fit">
-          <span className="bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[9px] font-black px-4 py-2 rounded-full uppercase tracking-widest shadow-lg">
-            ✦ Exclusive
-          </span>
-        </div>
-
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <h3 className="font-display font-black text-4xl text-white uppercase leading-none">
-              Italian<br/>Leather
-            </h3>
-            <p className="text-white/80 text-sm leading-relaxed">
-              Timeless pieces crafted by artisans with 75+ years of expertise
-            </p>
+      {/* ══════════════════════════════════════
+          5. TODAY'S DEALS
+      ══════════════════════════════════════ */}
+      {deals.length > 0 && (
+        <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+          <SH eyebrow="Exclusive Markdown" title="Today's Luxury Deals" viewAll onViewAll={() => onNavigate('shop', { filter: 'deal' })} />
+          {/* mobile scroll */}
+          <div className="sm:hidden">
+            <MobileRow drag={dealDrag} items={deals} />
           </div>
-
-          <div className="flex flex-wrap gap-2">
-            <span className="bg-white/20 backdrop-blur-sm text-white text-[10px] font-semibold px-3 py-1.5 rounded-full border border-white/30">Handcrafted</span>
-            <span className="bg-white/20 backdrop-blur-sm text-white text-[10px] font-semibold px-3 py-1.5 rounded-full border border-white/30">Full-Grain</span>
-            <span className="bg-white/20 backdrop-blur-sm text-white text-[10px] font-semibold px-3 py-1.5 rounded-full border border-white/30">Lifetime Warranty</span>
-          </div>
-
-          <button
-            onClick={() => onNavigate('shop', { category: 'Men' })}
-            className="w-full bg-white hover:bg-amber-400 text-black font-bold py-4 rounded-2xl uppercase text-sm tracking-wider transition-all duration-300 hover:scale-[1.03] shadow-2xl"
-          >
-            Shop Men's Collection →
-          </button>
-        </div>
-      </div>
-    </div>
-
-    {/* Women's Collection */}
-    <div className="relative rounded-3xl overflow-hidden h-[420px] group">
-      <img
-        src="https://images.unsplash.com/photo-1593010932917-92bd21088dee?w=600&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8Mnx8d29tYW4lMjBmYXNodGlvbnxlbnwwfHwwfHx8MA%3D%3D"
-        alt="Women's Collection"
-        className="absolute inset-0 w-full h-full object-cover brightness-110 group-hover:scale-105 transition-transform duration-1000"
-      />
-      
-      <div className="absolute inset-6 bg-white/25 backdrop-blur-2xl border border-white/30 rounded-2xl p-8 flex flex-col justify-between group-hover:bg-white/35 transition-all duration-500">
-        <div className="inline-flex w-fit">
-          <span className="bg-gradient-to-r from-rose-500 to-pink-500 text-white text-[9px] font-black px-4 py-2 rounded-full uppercase tracking-widest shadow-lg">
-            ✦ New Season
-          </span>
-        </div>
-
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <h3 className="font-display font-black text-4xl text-slate-900 uppercase leading-none">
-              Pure<br/>Cashmere
-            </h3>
-            <p className="text-slate-700 text-sm leading-relaxed">
-              The softest fibers from the Himalayas, woven into luxury
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <span className="bg-slate-900/20 backdrop-blur-sm text-slate-900 text-[10px] font-semibold px-3 py-1.5 rounded-full border border-slate-900/30">Ultra-Soft</span>
-            <span className="bg-slate-900/20 backdrop-blur-sm text-slate-900 text-[10px] font-semibold px-3 py-1.5 rounded-full border border-slate-900/30">Sustainable</span>
-            <span className="bg-slate-900/20 backdrop-blur-sm text-slate-900 text-[10px] font-semibold px-3 py-1.5 rounded-full border border-slate-900/30">Limited Edition</span>
-          </div>
-
-          <button
-            onClick={() => onNavigate('shop', { category: 'Women' })}
-            className="w-full bg-slate-900 hover:bg-rose-600 text-white font-bold py-4 rounded-2xl uppercase text-sm tracking-wider transition-all duration-300 hover:scale-[1.03] shadow-2xl"
-          >
-            Shop Women's Collection →
-          </button>
-        </div>
-      </div>
-    </div>
-
-    {/* Kids Collection - New */}
-    <div className="relative rounded-3xl overflow-hidden h-[420px] group">
-      <img
-        src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600&auto=format&fit=crop&q=80"
-        alt="Kids Collection"
-        className="absolute inset-0 w-full h-full object-cover brightness-95 group-hover:scale-105 transition-transform duration-1000"
-      />
-      
-      <div className="absolute inset-6 bg-black/25 backdrop-blur-2xl border border-white/25 rounded-2xl p-8 flex flex-col justify-between group-hover:bg-black/35 transition-all duration-500">
-        <div className="inline-flex w-fit">
-          <span className="bg-gradient-to-r from-emerald-500 to-cyan-500 text-white text-[9px] font-black px-4 py-2 rounded-full uppercase tracking-widest shadow-lg">
-            ✦ Little Luxe
-          </span>
-        </div>
-
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <h3 className="font-display font-black text-4xl text-white uppercase leading-none">
-              Kids<br/>Wonderland
-            </h3>
-            <p className="text-white/80 text-sm leading-relaxed">
-              Premium organic cotton & playful designs made for endless adventures
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <span className="bg-white/20 backdrop-blur-sm text-white text-[10px] font-semibold px-3 py-1.5 rounded-full border border-white/30">Organic Cotton</span>
-            <span className="bg-white/20 backdrop-blur-sm text-white text-[10px] font-semibold px-3 py-1.5 rounded-full border border-white/30">Playful & Durable</span>
-            <span className="bg-white/20 backdrop-blur-sm text-white text-[10px] font-semibold px-3 py-1.5 rounded-full border border-white/30">Safe & Soft</span>
-          </div>
-
-          <button
-            onClick={() => onNavigate('shop', { category: 'Kids' })}
-            className="w-full bg-white hover:bg-emerald-400 text-black font-bold py-4 rounded-2xl uppercase text-sm tracking-wider transition-all duration-300 hover:scale-[1.03] shadow-2xl"
-          >
-            Shop Kids Collection →
-          </button>
-        </div>
-      </div>
-    </div>
-
-  </div>
-</section>
-      {/* 8. Trending Products Section */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-        <div>
-          <span className="text-[10px] text-primary uppercase font-bold tracking-[0.2em]">High-Demand Drops</span>
-          <h2 className="font-display font-extrabold text-2xl text-black mt-1 uppercase">Trending Now</h2>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {trendingProducts.map((item) => (
-            <ProductCard key={item.id} product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
-          ))}
-        </div>
-      </section>
-
-      {/* 9. Best Sellers Section */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-        <div>
-          <span className="text-[10px] text-primary uppercase font-bold tracking-[0.2em]">The Hall of Fame</span>
-          <h2 className="font-display font-extrabold text-2xl text-black mt-1 uppercase">Best Sellers</h2>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {bestSellers.map((item) => (
-            <ProductCard key={item.id} product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
-          ))}
-        </div>
-      </section>
-
-      {/* 10. Recently Viewed Carousel (Stateful) */}
-      {recentlyViewed.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-          <div>
-            <span className="text-[10px] text-primary uppercase font-bold tracking-[0.2em]">Welcome Back</span>
-            <h2 className="font-display font-extrabold text-2xl text-black mt-1 uppercase">Recently Viewed Items</h2>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
-            {recentlyViewed.slice(0, 4).map((item) => (
-              <ProductCard key={item.id} product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
+          {/* desktop grid */}
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+            {deals.slice(0, 4).map((item) => (
+              <ProductCard key={item.id || item._id} product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
             ))}
           </div>
         </section>
       )}
 
-      {/* 11. Testimonials Bento Grid */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
-        <div className="text-center space-y-2">
-          <span className="text-[10px] text-primary uppercase font-bold tracking-[0.25em]">Global Affluence</span>
-          <h2 className="font-display font-extrabold text-2xl sm:text-3xl text-black uppercase">What Our Patrons Say</h2>
-        </div>
+      {/* ══════════════════════════════════════
+          6. FEATURED
+      ══════════════════════════════════════ */}
+      {featured.length > 0 && (
+        <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+          <SH eyebrow="Handpicked Masterpieces" title="Featured Collection" viewAll onViewAll={() => onNavigate('shop')} />
+          <div className="sm:hidden">
+            <MobileRow drag={featDrag} items={featured} />
+          </div>
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+            {featured.slice(0, 4).map((item) => (
+              <ProductCard key={item.id || item._id} product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
+            ))}
+          </div>
+        </section>
+      )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[
-            { name: "Suresh Pillai", rating: 5, role: "Collector", text: "The cashmere wool trench coat is beyond description. Weightless warmth, custom tailored drop. This is pure Indian design luxury." },
-            { name: "Devika Roy", rating: 5, role: "Creative Director", text: "Luxe Store's concierge support changed my perspective on online shopping. Extremely secure and responsive. Handled custom sizing flawlessly." },
-            { name: "Vikram Sethi", rating: 4.8, role: "Sartorialist", text: "Italian calfskin with genuine brass zippers. Understated prestige horology. The detailing beats any high street boutique." }
-          ].map((testi, i) => (
-            <div key={i} className="bg-white rounded-3xl p-6 border border-gray-100 shadow-xs flex flex-col justify-between">
-              <div className="space-y-4">
-                <div className="flex text-amber-400">
-                  {Array.from({ length: 5 }).map((_, rIdx) => (
-                    <FiStar key={rIdx} size={13} className="fill-current" />
-                  ))}
-                </div>
-                <p className="text-xs text-gray-500 italic leading-relaxed">
-                  "{testi.text}"
-                </p>
+      {/* ══════════════════════════════════════
+          7. DYNAMIC PROMOTIONAL BANNERS (LEFT BLOCK / RIGHT BLOCK)
+          Synced with Admin Dashboard
+      ══════════════════════════════════════ */}
+      {promoBanners && (promoBanners.banner1 || promoBanners.banner2) && (
+        <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+          <div className="flex items-end justify-between mb-4 sm:mb-6">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-[2px] w-5 rounded-full" style={{ background: 'linear-gradient(90deg,#D4AF37,transparent)' }} />
+                <span className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: '#007A8A' }}>Boutique Spotlights</span>
               </div>
-              <div className="pt-6 border-t border-gray-50 mt-6 flex items-center justify-between">
-                <div>
-                  <h4 className="text-xs font-bold text-gray-800">{testi.name}</h4>
-                  <p className="text-[10px] text-gray-400 font-medium uppercase mt-0.5">{testi.role}</p>
-                </div>
-              </div>
+              <h2 className="font-sans font-bold text-lg sm:text-xl md:text-2xl tracking-tight" style={{ color: '#1A1A3A' }}>Featured Spotlights</h2>
             </div>
-          ))}
-        </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 lg:gap-6">
+            {[promoBanners.banner1, promoBanners.banner2].map((banner, i) => {
+              if (!banner) return null;
+              return (
+                <div 
+                  key={i} 
+                  onClick={() => onNavigate('shop')}
+                  className="group relative rounded-3xl overflow-hidden cursor-pointer shadow-xl hover:shadow-2xl transition-all duration-500 hover:-translate-y-1"
+                  style={{ height: 'clamp(280px,38vw,360px)' }}
+                >
+                  <img 
+                    src={banner.image || 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=1200'} 
+                    alt={banner.title}
+                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
+                  />
+                  <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(8,8,22,0.9) 0%, rgba(8,8,22,0.3) 50%, transparent 100%)' }} />
+                  <div className="absolute inset-0 flex flex-col justify-between p-6">
+                    <span className="inline-block self-start text-white text-[8px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest bg-gradient-to-r from-amber-500 to-orange-500 shadow-md">
+                      {banner.badge}
+                    </span>
+                    <div className="space-y-2">
+                      <h3 className="font-sans font-bold text-xl sm:text-2xl text-white uppercase leading-tight">
+                        {banner.title}
+                      </h3>
+                      <p className="text-xs text-white/70 line-clamp-2 max-w-sm">
+                        {banner.description}
+                      </p>
+                      <span className="inline-block text-[10px] font-black uppercase text-[#D4AF37] tracking-wider group-hover:translate-x-1.5 transition-transform duration-300">
+                        Explore Collection →
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ══════════════════════════════════════
+          8. EDITORIAL BANNERS
+          Desktop: 3-col grid | Mobile: slider
+      ══════════════════════════════════════ */}
+      <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+        <SH eyebrow="Curated Collections" title="Atelier Editions" />
+        <EditorialBanners onNavigate={onNavigate} />
       </section>
 
-      {/* 12. Blog & Editorial Section */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+      {/* ══════════════════════════════════════
+          9. TRENDING
+      ══════════════════════════════════════ */}
+      {trending.length > 0 && (
+        <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+          <SH eyebrow="High-Demand Drops" title="Trending Now" viewAll onViewAll={() => onNavigate('shop')} />
+          <div className="sm:hidden">
+            <MobileRow drag={trendDrag} items={trending} />
+          </div>
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+            {trending.slice(0, 4).map((item) => (
+              <ProductCard key={item.id || item._id} product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ══════════════════════════════════════
+          10. BEST SELLERS
+      ══════════════════════════════════════ */}
+      {bestSell.length > 0 && (
+        <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+          <SH eyebrow="Hall of Fame" title="Best Sellers" viewAll onViewAll={() => onNavigate('shop')} />
+          <div className="sm:hidden">
+            <MobileRow drag={bsDrag} items={bestSell} />
+          </div>
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+            {bestSell.slice(0, 4).map((item) => (
+              <ProductCard key={item.id || item._id} product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ══════════════════════════════════════
+          11. RECENTLY VIEWED
+      ══════════════════════════════════════ */}
+      {recentlyViewed.length > 0 && (
+        <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+          <SH eyebrow="Welcome Back" title="Recently Viewed" />
+          <div className="sm:hidden">
+            <MobileRow drag={recentDrag} items={recentlyViewed.slice(0, 8)} />
+          </div>
+          <div className="hidden sm:grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+            {recentlyViewed.slice(0, 4).map((item) => (
+              <ProductCard key={item.id || item._id} product={item} onNavigate={onNavigate} onQuickView={onQuickView} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ══════════════════════════════════════
+          12. TESTIMONIALS
+      ══════════════════════════════════════ */}
+      <TestimonialsSection />
+
+      {/* ══════════════════════════════════════
+          13. BLOG
+      ══════════════════════════════════════ */}
+      <BlogSection />
+
+      {/* ══════════════════════════════════════
+          14. ATELIER REELS
+      ══════════════════════════════════════ */}
+      <div className="mt-12 sm:mt-14">
+        <AtelierReels siteSettings={siteSettings} onNavigate={onNavigate} />
+      </div>
+
+      {/* ══════════════════════════════════════
+          15. NEWSLETTER
+      ══════════════════════════════════════ */}
+      <NewsletterSection />
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
+   SUB-COMPONENTS (kept in same file)
+───────────────────────────────────────── */
+
+function CatCard({ cat, onNavigate }) {
+  return (
+    <div
+      onClick={() => onNavigate('shop', { category: cat.slug || cat.name })}
+      className="group relative rounded-2xl overflow-hidden cursor-pointer shadow hover:shadow-xl transition-all duration-500 hover:-translate-y-1"
+      style={{ aspectRatio: '4/5' }}
+    >
+      <img
+        src={cat.image || 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=600&auto=format&fit=crop'}
+        alt={cat.name}
+        className="absolute inset-0 w-full h-full object-cover object-center transition-transform duration-700 group-hover:scale-[1.08]"
+        onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=600'; }}
+      />
+      <div className="absolute bottom-0 left-0 right-0 h-[52%] z-10"
+        style={{ background: 'linear-gradient(to top,rgba(8,8,22,0.96) 0%,rgba(8,8,22,0.48) 60%,transparent 100%)' }} />
+      <div className="absolute inset-0 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+        style={{ backgroundColor: 'rgba(8,8,22,0.16)' }} />
+      <div className="absolute inset-0 z-20 rounded-2xl ring-0 group-hover:ring-2 ring-amber-400/40 ring-inset transition-all duration-500 pointer-events-none" />
+
+      {/* NEW badge */}
+      <div className="absolute top-2 left-2 z-30">
+        <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#D4AF37', color: '#1A1A3A' }}>NEW</span>
+      </div>
+
+      <div className="absolute bottom-0 left-0 right-0 z-30 p-3">
+        <div className="h-[2px] w-4 mb-1.5 rounded-full group-hover:w-8 transition-all duration-500" style={{ backgroundColor: '#D4AF37' }} />
+        <h3 className="font-sans font-bold text-[11px] sm:text-xs tracking-wider uppercase text-white leading-tight">{cat.name}</h3>
+        <div className="flex items-center justify-between mt-0.5">
+          <p className="text-[9px] font-semibold" style={{ color: 'rgba(212,175,55,0.85)' }}>{cat.productCount || 0} Items</p>
+          <div className="w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300"
+            style={{ backgroundColor: '#D4AF37', color: '#1A1A3A' }}>
+            <FiArrowRight size={8} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Editorial banners — desktop 3-col, mobile auto-slider */
+function EditorialBanners({ onNavigate }) {
+  const cards = [
+    {
+      img: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800&auto=format&fit=crop&q=85',
+      badge: '✦ Exclusive', badgeFrom: '#f59e0b', badgeTo: '#f97316',
+      heading: ['Italian', 'Leather'],
+      desc: 'Timeless pieces by artisans with 75+ years of expertise',
+      chips: ['Handcrafted', 'Full-Grain', 'Lifetime Warranty'],
+      btnText: "Shop Men's →", btnAction: () => onNavigate('shop', { category: 'Men' }),
+      objectPos: 'center 20%',
+    },
+    {
+      img: 'https://images.unsplash.com/photo-1593010932917-92bd21088dee?w=800&auto=format&fit=crop&q=85',
+      badge: '✦ New Season', badgeFrom: '#f43f5e', badgeTo: '#ec4899',
+      heading: ['Pure', 'Cashmere'],
+      desc: 'The softest Himalayan fibers, woven into luxury',
+      chips: ['Ultra-Soft', 'Sustainable', 'Limited Edition'],
+      btnText: "Shop Women's →", btnAction: () => onNavigate('shop', { category: 'Women' }),
+      objectPos: 'center 15%',
+    },
+    {
+      img: 'https://images.unsplash.com/photo-1471286174890-9c112ffca5b4?w=800&auto=format&fit=crop&q=85',
+      badge: '✦ Little Luxe', badgeFrom: '#10b981', badgeTo: '#06b6d4',
+      heading: ['Kids', 'Wonderland'],
+      desc: 'Premium organic cotton for endless adventures',
+      chips: ['Organic Cotton', 'Playful', 'Safe & Soft'],
+      btnText: "Shop Kids' →", btnAction: () => onNavigate('shop', { category: 'Kids' }),
+      objectPos: 'center 30%',
+    },
+  ];
+
+  const s = useSlider(cards.length, 3800);
+
+  return (
+    <>
+      {/* desktop */}
+      <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-5 lg:gap-6">
+        {cards.map((c, i) => <EditCard key={i} c={c} />)}
+      </div>
+
+      {/* mobile slider */}
+      <div className="md:hidden relative">
+        <AnimatePresence mode="wait">
+          <motion.div key={s.idx}
+            initial={{ opacity: 0, x: 36 }} animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -36 }} transition={{ duration: 0.38 }}
+          >
+            <EditCard c={cards[s.idx]} />
+          </motion.div>
+        </AnimatePresence>
+        {/* nav */}
+        <div className="flex items-center justify-between mt-3">
+          <button onClick={s.prev} className="w-8 h-8 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(212,175,55,0.12)', border: '1px solid rgba(212,175,55,0.3)', color: '#D4AF37' }}>
+            <FiChevronLeft size={14} />
+          </button>
+          <div className="flex gap-1.5">
+            {cards.map((_, i) => (
+              <button key={i} onClick={() => s.go(i)} className="rounded-full transition-all duration-400"
+                style={{ width: i === s.idx ? '22px' : '6px', height: '6px', backgroundColor: i === s.idx ? '#D4AF37' : 'rgba(212,175,55,0.35)' }} />
+            ))}
+          </div>
+          <button onClick={s.next} className="w-8 h-8 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(212,175,55,0.12)', border: '1px solid rgba(212,175,55,0.3)', color: '#D4AF37' }}>
+            <FiChevronRight size={14} />
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function EditCard({ c }) {
+  return (
+    <div className="group relative rounded-3xl overflow-hidden cursor-pointer shadow-xl hover:shadow-2xl transition-all duration-500 hover:-translate-y-1"
+      style={{ height: 'clamp(360px,48vw,470px)' }} onClick={c.btnAction}
+    >
+      <img src={c.img} alt={c.heading.join(' ')}
+        className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
+        style={{ objectPosition: c.objectPos }}
+        onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=600'; }}
+      />
+      <div className="absolute inset-0"
+        style={{ background: 'linear-gradient(to top,rgba(8,8,22,0.92) 0%,rgba(8,8,22,0.4) 50%,rgba(8,8,22,0.04) 100%)' }} />
+      <div className="absolute inset-0 flex flex-col justify-between p-5 sm:p-6">
+        <span className="inline-block text-white text-[8px] font-black px-3.5 py-1.5 rounded-full uppercase tracking-widest shadow-lg"
+          style={{ background: `linear-gradient(135deg,${c.badgeFrom},${c.badgeTo})` }}>{c.badge}</span>
+        <div className="space-y-3">
+          <div>
+            <h3 className="font-sans font-bold uppercase leading-tight text-white"
+              style={{ fontSize: 'clamp(1.8rem,4.5vw,2.8rem)' }}>
+              {c.heading[0]}<br />{c.heading[1]}
+            </h3>
+            <p className="mt-2 text-xs leading-relaxed" style={{ color: 'rgba(255,255,255,0.75)' }}>{c.desc}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {c.chips.map((chip, i) => (
+              <span key={i} className="text-[9px] font-semibold px-2.5 py-1 rounded-full"
+                style={{ backgroundColor: 'rgba(255,255,255,0.13)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', backdropFilter: 'blur(8px)' }}>
+                {chip}
+              </span>
+            ))}
+          </div>
+          <button
+            className="w-full py-3 rounded-2xl font-bold text-xs uppercase tracking-wider transition-all duration-300 hover:scale-[1.02] shadow-xl"
+            style={{ backgroundColor: '#fff', color: '#1A1A3A' }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#D4AF37')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#fff')}
+            onClick={(e) => { e.stopPropagation(); c.btnAction(); }}
+          >
+            {c.btnText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TestimonialsSection() {
+  const testimonials = [
+    { name: 'Suresh Pillai', rating: 5, role: 'Collector', initial: 'S', text: 'The cashmere wool trench coat is beyond description. Weightless warmth, perfectly tailored drop. Pure Indian design luxury.' },
+    { name: 'Devika Roy',    rating: 5, role: 'Creative Director', initial: 'D', text: "Luxe Store's concierge support completely changed my perspective on online shopping. Secure, responsive, flawless." },
+    { name: 'Vikram Sethi',  rating: 4.8, role: 'Sartorialist', initial: 'V', text: 'Italian calfskin with genuine brass zippers. The detailing beats any high street boutique I have visited.' },
+  ];
+  const s = useSlider(testimonials.length, 4000);
+
+  return (
+    <section className="mt-12 sm:mt-14 py-12 sm:py-14" style={{ backgroundColor: '#1A1A3A' }}>
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="text-center mb-8 sm:mb-10">
+          <div className="flex items-center justify-center gap-4 mb-2">
+            <div className="h-px w-14 sm:w-20" style={{ background: 'linear-gradient(90deg,transparent,#D4AF37)' }} />
+            <span className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: '#007A8A' }}>Global Patrons</span>
+            <div className="h-px w-14 sm:w-20" style={{ background: 'linear-gradient(90deg,#D4AF37,transparent)' }} />
+          </div>
+          <h2 className="font-sans font-bold text-xl sm:text-2xl uppercase" style={{ color: '#F8F8F8' }}>What Our Patrons Say</h2>
+        </div>
+
+        {/* desktop grid */}
+        <div className="hidden sm:grid sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-5">
+          {testimonials.map((t, i) => <TestiCard key={i} t={t} />)}
+        </div>
+
+        {/* mobile slider */}
+        <div className="sm:hidden">
+          <AnimatePresence mode="wait">
+            <motion.div key={s.idx}
+              initial={{ opacity: 0, x: 32 }} animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -32 }} transition={{ duration: 0.36 }}
+            >
+              <TestiCard t={testimonials[s.idx]} />
+            </motion.div>
+          </AnimatePresence>
+          <div className="flex justify-center gap-1.5 mt-4">
+            {testimonials.map((_, i) => (
+              <button key={i} onClick={() => s.go(i)} className="rounded-full transition-all duration-400"
+                style={{ width: i === s.idx ? '22px' : '6px', height: '6px', backgroundColor: i === s.idx ? '#D4AF37' : 'rgba(212,175,55,0.35)' }} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TestiCard({ t }) {
+  return (
+    <div className="relative rounded-2xl p-5 flex flex-col justify-between group hover:-translate-y-1 transition-all duration-300 overflow-hidden"
+      style={{ backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(212,175,55,0.12)' }}
+      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
+      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)')}
+    >
+      <div className="absolute top-0 left-0 right-0 h-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+        style={{ background: 'linear-gradient(90deg,#1A1A3A,#D4AF37,#007A8A)' }} />
+      <div className="absolute top-2 right-3 font-sans font-black text-6xl leading-none select-none opacity-[0.05]" style={{ color: '#D4AF37' }}>"</div>
+      <div className="space-y-3">
+        <div className="flex gap-0.5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <FiStar key={i} size={12} className="fill-current" style={{ color: '#D4AF37' }} />
+          ))}
+        </div>
+        <p className="text-xs sm:text-sm italic leading-relaxed" style={{ color: 'rgba(248,248,248,0.7)' }}>"{t.text}"</p>
+      </div>
+      <div className="pt-4 mt-4 flex items-center gap-3" style={{ borderTop: '1px solid rgba(212,175,55,0.1)' }}>
+        <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-black flex-shrink-0"
+          style={{ background: 'linear-gradient(135deg,#D4AF37,#B8941F)', color: '#1A1A3A' }}>{t.initial}</div>
         <div>
-          <span className="text-[10px] text-primary uppercase font-bold tracking-[0.2em]">The Atelier Chronicles</span>
-          <h2 className="font-display font-extrabold text-2xl text-black mt-1 uppercase">Style & Craft Editorials</h2>
+          <h4 className="text-xs font-black" style={{ color: '#F8F8F8' }}>{t.name}</h4>
+          <p className="text-[9px] font-bold uppercase tracking-wider mt-0.5" style={{ color: '#007A8A' }}>{t.role}</p>
         </div>
+        <div className="ml-auto text-[9px] font-black px-2 py-1 rounded-full" style={{ backgroundColor: 'rgba(212,175,55,0.12)', color: '#D4AF37' }}>★ {t.rating}</div>
+      </div>
+    </div>
+  );
+}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[
-            { img: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=400", title: "Sartorial Layering for Autumn Cityscapes", date: "July 02, 2026" },
-            { img: "https://images.unsplash.com/photo-1549298916-b41d501d3772?q=80&w=400", title: "Evolution of the Minimalist Italian Low-Top", date: "June 28, 2026" },
-            { img: "https://images.unsplash.com/photo-1522312346375-d1a52e2b99b3?q=80&w=400", title: "Swiss Horology & Triple Quartz Chronographs", date: "June 15, 2026" }
-          ].map((blog, i) => (
-            <div key={i} className="group cursor-pointer bg-white rounded-3xl overflow-hidden border border-gray-100 shadow-sm hover:shadow-xl transition-all">
-              <div className="aspect-[16/10] overflow-hidden bg-slate-100">
-                <img src={blog.img} alt={blog.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-              </div>
-              <div className="p-5 space-y-2">
-                <span className="text-[9px] text-gray-400 font-bold uppercase tracking-wider">{blog.date}</span>
-                <h3 className="text-xs font-semibold text-gray-800 line-clamp-2 leading-snug group-hover:text-primary transition-colors">
-                  {blog.title}
-                </h3>
-              </div>
-            </div>
+function BlogSection() {
+  const blogs = [
+    { img: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=85&w=800&auto=format&fit=crop', title: 'Sartorial Layering for Autumn Cityscapes', date: 'July 02, 2026', tag: 'Style', readTime: '4 min' },
+    { img: 'https://images.unsplash.com/photo-1549298916-b41d501d3772?q=85&w=800&auto=format&fit=crop', title: 'Evolution of the Minimalist Italian Low-Top', date: 'June 28, 2026', tag: 'Craft', readTime: '6 min' },
+    { img: 'https://images.unsplash.com/photo-1522312346375-d1a52e2b99b3?q=85&w=800&auto=format&fit=crop', title: 'Swiss Horology & Triple Quartz Chronographs', date: 'June 15, 2026', tag: 'Editorial', readTime: '5 min' },
+  ];
+  const s = useSlider(blogs.length, 4200);
+
+  return (
+    <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+      <div className="flex items-end justify-between mb-4 sm:mb-6">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <div className="h-[2px] w-5 rounded-full" style={{ background: 'linear-gradient(90deg,#D4AF37,transparent)' }} />
+            <span className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: '#007A8A' }}>The Atelier Chronicles</span>
+          </div>
+          <h2 className="font-sans font-bold text-lg sm:text-xl md:text-2xl tracking-tight" style={{ color: '#1A1A3A' }}>Style & Craft Editorials</h2>
+        </div>
+      </div>
+
+      {/* desktop */}
+      <div className="hidden sm:grid sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-5">
+        {blogs.map((b, i) => <BlogCard key={i} b={b} />)}
+      </div>
+
+      {/* mobile slider */}
+      <div className="sm:hidden">
+        <AnimatePresence mode="wait">
+          <motion.div key={s.idx}
+            initial={{ opacity: 0, x: 32 }} animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -32 }} transition={{ duration: 0.36 }}
+          >
+            <BlogCard b={blogs[s.idx]} />
+          </motion.div>
+        </AnimatePresence>
+        <div className="flex justify-center gap-1.5 mt-3">
+          {blogs.map((_, i) => (
+            <button key={i} onClick={() => s.go(i)} className="rounded-full transition-all duration-400"
+              style={{ width: i === s.idx ? '22px' : '6px', height: '6px', backgroundColor: i === s.idx ? '#D4AF37' : 'rgba(212,175,55,0.35)' }} />
           ))}
         </div>
-      </section>
+      </div>
+    </section>
+  );
+}
 
-{/* ✅ 13. ATELIER REELS - Instagram Reels Style */}
-<section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-  {/* Header */}
-  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-    <div className="text-center sm:text-left">
-      <span className="text-[10px] text-[#d49a34] uppercase font-bold tracking-[0.3em]">#LuxeAtelier</span>
-      <h2 className="font-display font-extrabold text-2xl text-black uppercase mt-1">Atelier Reels</h2>
-      <p className="text-xs text-gray-400 mt-1">Watch our latest style drops & behind-the-scenes</p>
-    </div>
-    <a href={siteSettings?.instagram || "https://instagram.com"} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-gradient-to-r from-purple-600 via-pink-500 to-orange-400 text-white text-xs font-bold px-5 py-2.5 rounded-full uppercase tracking-wider hover:scale-105 transition-all shadow-lg shadow-pink-200">
-      <FiInstagram size={14} /> Follow @luxe.atelier
-    </a>
-  </div>
-
-  {/* Reels Grid - 9:16 aspect ratio like actual reels */}
-  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
-    {products.slice(0, 5).map((product, idx) => {
-      const likes = Math.floor(Math.random() * 50000 + 5000);
-      const comments = Math.floor(Math.random() * 800 + 50);
-      const views = Math.floor(Math.random() * 500000 + 50000);
-      const usernames = ['@priya.style', '@arjun.m', '@neha.luxe', '@vikram.fit', '@ananya.vogue'];
-      const captions = [
-        `${product.name} · The perfect autumn layer 🍂`,
-        `New drop alert! ${product.name} just landed ✨`,
-        `Styled this ${product.category} piece for the weekend 🔥`,
-        `${product.brand || 'Luxe Atelier'} never disappoints 💫`,
-        `Rate this look 1-10! ${product.name} 🖤`
-      ];
-      const songs = ['Aesthetic Vibes · Lo-fi', 'Golden Hour · JVKE', 'Midnight City · M83', 'Sunset Lover · Petit Biscuit', 'Dreams · Fleetwood Mac'];
-
-      return (
-        <div
-          key={product.id || product._id || idx}
-          className="relative aspect-[9/16] rounded-2xl md:rounded-3xl overflow-hidden group cursor-pointer shadow-lg hover:shadow-2xl transition-all duration-500 hover:-translate-y-1"
-          onClick={() => onNavigate('product-details', { slug: product.slug || product.id || product._id })}
-        >
-          {/* Background Image */}
-          <img
-            src={product.image || 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=400'}
-            alt={product.name}
-            className="absolute inset-0 w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000"
-          />
-
-          {/* Dark Gradient Overlay (Reel style) */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-black/10" />
-
-          {/* Top Bar - Views + More */}
-          <div className="absolute top-3 left-3 right-3 flex justify-between items-start z-10">
-            <div className="flex items-center gap-1.5 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full">
-              <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/></svg>
-              <span className="text-white text-[9px] font-bold">{views >= 1000000 ? `${(views/1000000).toFixed(1)}M` : views >= 1000 ? `${(views/1000).toFixed(0)}K` : views}</span>
-            </div>
-            <div className="bg-black/40 backdrop-blur-md p-1.5 rounded-full">
-              <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"/></svg>
-            </div>
-          </div>
-
-          {/* Right Side Actions (Like Reels) */}
-          <div className="absolute right-3 bottom-24 flex flex-col items-center gap-4 z-10">
-            {/* Like */}
-            <button onClick={(e) => { e.stopPropagation(); toast.success('Liked! ❤️'); }} className="flex flex-col items-center gap-0.5 group/like">
-              <div className="w-9 h-9 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center group-hover/like:bg-pink-500/80 transition-all duration-300 group-hover/like:scale-110">
-                <FiHeart size={16} className="text-white group-hover/like:fill-current" />
-              </div>
-              <span className="text-white text-[9px] font-bold">{likes >= 1000 ? `${(likes/1000).toFixed(1)}K` : likes}</span>
-            </button>
-            {/* Comment */}
-            <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-0.5">
-              <div className="w-9 h-9 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center hover:bg-white/20 transition-all">
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-              </div>
-              <span className="text-white text-[9px] font-bold">{comments}</span>
-            </button>
-            {/* Share */}
-            <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-0.5">
-              <div className="w-9 h-9 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center hover:bg-white/20 transition-all">
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-              </div>
-              <span className="text-white text-[9px] font-bold">Share</span>
-            </button>
-            {/* Bookmark */}
-            <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-0.5">
-              <div className="w-9 h-9 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center hover:bg-white/20 transition-all">
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>
-              </div>
-            </button>
-          </div>
-
-          {/* Bottom Content (Username + Caption + Song) */}
-          <div className="absolute bottom-0 left-0 right-14 p-4 z-10 space-y-2">
-            {/* Username with Story Ring */}
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full p-[2px] bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex-shrink-0">
-                <div className="w-full h-full rounded-full bg-gray-800 flex items-center justify-center overflow-hidden">
-                  <span className="text-white text-[10px] font-black">{(product.brand || 'L')[0]}</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-white text-[11px] font-bold">{usernames[idx % usernames.length]}</span>
-                <svg className="w-3 h-3 text-blue-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/></svg>
-              </div>
-            </div>
-
-            {/* Caption */}
-            <p className="text-white text-[11px] leading-relaxed line-clamp-2 font-medium">
-              {captions[idx % captions.length]}
-            </p>
-
-            {/* Category Tag */}
-            <div className="flex items-center gap-1.5">
-              <span className="bg-white/15 backdrop-blur-sm text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">{product.category || 'Fashion'}</span>
-              <span className="bg-[#d49a34]/80 text-white text-[8px] font-black px-2 py-0.5 rounded-full">₹{(Number(product.price) || 0).toLocaleString()}</span>
-            </div>
-
-            {/* Song/Music Indicator */}
-            <div className="flex items-center gap-2 pt-1">
-              <svg className="w-3 h-3 text-white animate-spin" style={{ animationDuration: '3s' }} fill="currentColor" viewBox="0 0 20 20"><path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 12c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z"/></svg>
-              <span className="text-white/70 text-[9px] font-medium truncate">{songs[idx % songs.length]}</span>
-            </div>
-          </div>
-
-          {/* Progress Bar at Bottom (Reel style) */}
-          <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-white/20 z-20">
-            <div className="h-full bg-white rounded-full" style={{ width: `${Math.floor(Math.random() * 60 + 30)}%` }}></div>
-          </div>
-
-          {/* Play Button on Hover */}
-          <div className="absolute inset-0 flex items-center justify-center z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-            <div className="w-14 h-14 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center border border-white/30 scale-75 group-hover:scale-100 transition-transform duration-300">
-              <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"/></svg>
-            </div>
+function BlogCard({ b }) {
+  return (
+    <div className="group cursor-pointer rounded-2xl overflow-hidden bg-white hover:shadow-xl hover:-translate-y-1 transition-all duration-300"
+      style={{ border: '1px solid rgba(26,26,58,0.07)' }}>
+      <div className="relative overflow-hidden" style={{ aspectRatio: '16/9' }}>
+        <img src={b.img} alt={b.title}
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          style={{ objectPosition: 'center 20%' }}
+          onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=600'; }}
+        />
+        <div className="absolute top-2.5 left-2.5 z-10">
+          <span className="text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full"
+            style={{ backgroundColor: '#1A1A3A', color: '#D4AF37' }}>{b.tag}</span>
+        </div>
+        <div className="absolute top-2.5 right-2.5 z-10">
+          <span className="text-[8px] font-semibold px-2 py-1 rounded-full"
+            style={{ backgroundColor: 'rgba(0,0,0,0.5)', color: '#fff', backdropFilter: 'blur(8px)' }}>{b.readTime}</span>
+        </div>
+        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center z-20"
+          style={{ backgroundColor: 'rgba(26,26,58,0.35)' }}>
+          <div className="w-10 h-10 rounded-full flex items-center justify-center scale-75 group-hover:scale-100 transition-transform duration-300"
+            style={{ backgroundColor: '#D4AF37', color: '#1A1A3A' }}>
+            <FiArrowRight size={15} />
           </div>
         </div>
-      );
-    })}
-  </div>
-
-  {/* Bottom CTA */}
-  <div className="text-center pt-4">
-    <button onClick={() => onNavigate('shop')} className="inline-flex items-center gap-2 text-xs font-bold text-gray-600 hover:text-[#d49a34] transition-colors group">
-      <span>View All {products.length} Looks</span>
-      <FiArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
-    </button>
-  </div>
-</section>
+      </div>
+      <div className="p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="h-px flex-1" style={{ backgroundColor: 'rgba(212,175,55,0.2)' }} />
+          <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: '#007A8A' }}>{b.date}</span>
+        </div>
+        <h3 className="text-xs sm:text-sm font-bold line-clamp-2 leading-snug group-hover:text-[#007A8A] transition-colors duration-300"
+          style={{ color: '#1A1A3A' }}>{b.title}</h3>
+        <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider" style={{ color: '#D4AF37' }}>
+          <span>Read Article</span><FiArrowRight size={10} />
+        </div>
+      </div>
     </div>
+  );
+}
+
+function NewsletterSection() {
+  return (
+    <section className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 mt-12 sm:mt-14">
+      <div className="relative rounded-3xl overflow-hidden py-10 sm:py-14 px-5 sm:px-12 text-center"
+        style={{ background: 'linear-gradient(135deg,#1A1A3A 0%,#2E3192 50%,#1A1A3A 100%)', border: '1px solid rgba(212,175,55,0.15)' }}>
+        <div className="absolute -top-16 -left-16 w-56 h-56 rounded-full blur-[72px] opacity-20 pointer-events-none" style={{ backgroundColor: '#D4AF37' }} />
+        <div className="absolute -bottom-16 -right-16 w-56 h-56 rounded-full blur-[72px] opacity-15 pointer-events-none" style={{ backgroundColor: '#007A8A' }} />
+        <div className="relative z-10 max-w-lg mx-auto space-y-4 sm:space-y-5">
+          <div className="flex items-center justify-center gap-3">
+            <div className="h-px w-10" style={{ background: 'linear-gradient(90deg,transparent,#D4AF37)' }} />
+            <span className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: '#D4AF37' }}>The Inner Circle</span>
+            <div className="h-px w-10" style={{ background: 'linear-gradient(90deg,#D4AF37,transparent)' }} />
+          </div>
+          <h2 className="font-sans font-bold text-xl sm:text-2xl md:text-3xl uppercase text-white leading-tight">
+            Join The Atelier<br /><span style={{ color: '#D4AF37' }}>Members Club</span>
+          </h2>
+          <p className="text-sm font-light" style={{ color: 'rgba(248,248,248,0.6)' }}>
+            Early access to collections, exclusive offers & luxury editorials.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2.5 max-w-md mx-auto">
+            <input type="email" placeholder="Enter your email address"
+              className="flex-1 px-4 py-3 rounded-full text-sm outline-none"
+              style={{ backgroundColor: 'rgba(255,255,255,0.08)', border: '1.5px solid rgba(212,175,55,0.25)', color: '#F8F8F8' }}
+              onFocus={(e) => (e.target.style.borderColor = 'rgba(212,175,55,0.6)')}
+              onBlur={(e) => (e.target.style.borderColor = 'rgba(212,175,55,0.25)')}
+            />
+            <button className="px-6 py-3 rounded-full text-[11px] font-black uppercase tracking-[0.14em] transition-all duration-300 hover:scale-105 whitespace-nowrap"
+              style={{ backgroundColor: '#D4AF37', color: '#1A1A3A', boxShadow: '0 6px 20px rgba(212,175,55,0.38)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#c49e2f')}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#D4AF37')}
+            >
+              Subscribe
+            </button>
+          </div>
+          <p className="text-[10px]" style={{ color: 'rgba(248,248,248,0.32)' }}>No spam. Unsubscribe anytime.</p>
+        </div>
+      </div>
+    </section>
   );
 }
